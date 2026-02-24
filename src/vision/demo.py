@@ -64,50 +64,66 @@ def webcam_to_open3d_depth_live():
     vis.create_window(window_name="Live 3D Point Cloud (Open3D)")
 
     added = False
-    step = 4
-    pc = o3d.geometry.PointCloud()
+    paused = False
+
+    step = 2          # dense cloud
     z_scale = 2.0
+    normalize_depth = True
+    pc = o3d.geometry.PointCloud()
 
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            h, w, _ = frame.shape
+            # Capture only if not paused
+            if not paused:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                h, w, _ = frame.shape
 
-            depth = estimate_depth(frame)
-            # Normalize and invert depth
-            d = (depth - np.min(depth)) / (np.max(depth) - np.min(depth) + 1e-8)
-            d = 1.0 - d
-            d *= z_scale
+                depth = estimate_depth(frame)
+                d = depth.copy()
+                if normalize_depth:
+                    d = (d - np.min(d)) / (np.max(d) - np.min(d) + 1e-8)
+                    d = 1.0 - d
+                d *= z_scale
 
-            fx, fy = 1.2 * w, 1.2 * h
-            cx, cy = w / 2, h / 2
+                fx, fy = 1.2 * w, 1.2 * h
+                cx, cy = w / 2, h / 2
 
-            points, colors = [], []
-            for y in range(0, h, step):
-                for x in range(0, w, step):
-                    z = float(d[y, x])
-                    X = (x - cx) / fx * z
-                    Y = -(y - cy) / fy * z
-                    Z = z
-                    points.append([X, Y, Z])
-                    b, g, r = frame[y, x]
-                    colors.append([r/255.0, g/255.0, b/255.0])
+                # Convert to RGBD and generate point cloud
+                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+                    o3d.geometry.Image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)),
+                    o3d.geometry.Image((d * 1000).astype(np.uint16)),
+                    depth_scale=1000.0,
+                    convert_rgb_to_intensity=False,
+                )
+                intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
+                pc = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic)
 
-            pc.points = o3d.utility.Vector3dVector(np.array(points, np.float32))
-            pc.colors = o3d.utility.Vector3dVector(np.array(colors, np.float32))
+                # Flip the point cloud vertically (right side up)
+                flip = np.array([[1, 0, 0, 0],
+                                 [0, -1, 0, h],
+                                 [0, 0, 1, 0],
+                                 [0, 0, 0, 1]])
+                pc.transform(flip)
 
-            if not added:
-                vis.add_geometry(pc)
-                added = True
-            else:
-                vis.update_geometry(pc)
+                if not added:
+                    vis.add_geometry(pc)
+                    added = True
+                else:
+                    vis.update_geometry(pc)
 
+            # Refresh visualization
             vis.poll_events()
             vis.update_renderer()
-            if cv2.waitKey(1) == 27 or not vis.poll_events():
+
+            # --- Keyboard controls ---
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27 or not vis.poll_events():  # ESC or close window
                 break
+            elif key == 32:  # SPACE toggles pause
+                paused = not paused
+                print("⏸️  Paused" if paused else "▶️  Resumed")
 
     finally:
         cap.release()
