@@ -1,2 +1,6 @@
 # Core dependencies
-# Add your project dependencies here
+open3d
+opencv-python
+numpy
+torch
+transformers
