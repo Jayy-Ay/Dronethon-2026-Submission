@@ -28,8 +28,18 @@ class UdpVideoStreamer:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
 
-        print("Actual width:", self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        print("Actual height:", self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        """
+        cv2 has predifined resolutions @ fps
+        if the input resolution and fps aren't predifined
+        cv2 will pick the closest?
+
+        preset formats can be checked with:
+        sudo apt install v4l-utils
+        v4l2-ctl --list-formats-ext
+        """
+        self.width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        self.height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
 
         self.frame_interval = 1.0 / self.fps if self.fps > 0 else 0
         self.IDENTIFIER = b"MJPG_HDR" # Should be 8 chars long - or we got problems
