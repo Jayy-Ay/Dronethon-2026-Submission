@@ -12,12 +12,30 @@ for marker_id in range(5):  # generate markers 0,1,2,3,4
 
 print("Generated markers 0-4 as PNG files.")
 
-# --- Step 2: Open webcam and detect markers ---
-cap = cv2.VideoCapture(0)
+# Make this be an argument passed in from the caller
+NETWORK_STREAM_INPUT = False
+
+stream_provider = None
+cap = None
+
+# --- Step 2: Get video capture and detect markers ---
+if NETWORK_STREAM_INPUT:
+    from frame_provider import StreamFrameProvider
+    stream_provider = StreamFrameProvider(port=1234)
+    frame = stream_provider.get_frame_with_timeout(timeout=2.0)
+else:
+    cap = cv2.VideoCapture(0)
+
+    # Optional: camera calibration (replace with your real values if available)
+
+    ret, frame = cap.read()
+
 detector = cv2.aruco.ArucoDetector(ARUCO_DICT)
 
-# Optional: camera calibration (replace with your real values if available)
-ret, frame = cap.read()
+if frame is None:
+    print("Failed to read the initial frame")
+    exit(1)
+
 h, w, _ = frame.shape
 fx = fy = 1.2 * w  # approximate focal length
 cx, cy = w / 2, h / 2
@@ -35,9 +53,18 @@ obj_points = np.array([
 ], dtype=np.float32)
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    if NETWORK_STREAM_INPUT:
+        if stream_provider is None:
+            break
+        frame = stream_provider.get_frame()
+        if frame is None:
+            continue
+    else:
+        if cap is None:
+            break
+        ret, frame = cap.read()
+        if not ret:
+            break
 
     corners, ids, rejected = detector.detectMarkers(frame)
 
@@ -65,5 +92,6 @@ while True:
     if key == 27:  # ESC
         break
 
-cap.release()
+if cap is not None:
+    cap.release()
 cv2.destroyAllWindows()
