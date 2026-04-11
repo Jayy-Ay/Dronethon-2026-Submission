@@ -1,0 +1,82 @@
+<!--
+  Minimal bringup for a real Pixhawk in RViz.
+  Default is serial, but fcu_url can also be overridden with a UDP URL.
+
+  This launch file includes the standard MAVROS launch file for PX4, and then adds a robot_state_publisher to publish the drone's URDF model, as well as a custom node to bridge MAVROS odometry data to TF. Then optionally launches RViz with a pre-configured visualization setup.
+
+  1. MAVROS Launch: Sets up the connection to the flight controller using the specified params, allowing it to publish odometry, state, and other relevant topics
+  2. Robot State Publisher: Loads the drone's URDF model and publishes the robot state (joint states, transforms) to TF, enabling RViz to visualize the drone model based on its current state
+  3. MAVROS TF Bridge: A custom node that subscribes to the MAVROS odometry topic, converts the odometry data into TF transforms, and publishes them so that RViz can visualize the drone's pos and orientation in the 3D space
+  4. RViz Launch: Optionally launches RViz with a pre-configured visualization setup (drone_viz.rviz) that includes displays for the drone model, TF frames, and other relevant visualizations
+
+  Terminology:
+   - Serial: Comm method that allows data exchange between computer and flight controller via a serial port
+   - UDP: Comm protocol for sending messages over network, often for wireless commu
+   - fcu_url: Connection URL for the flight controller
+   - URDF (Unified Robot Desc Format): XML format for representing a robot model
+   - ROS (Robot OS): Framework for writing robot software
+   - Odometry: A ROS message type that contains info about the pos and vel of the robot, oftenfor localization/navigation.
+   - TF: A ROS package that lets the user keep track of multiple coords frames over time, and transform data between them
+-->
+<launch> 
+  <!-- Arguments for MAVROS connection 
+    - fcu_url: Default to common serial connection for Pixhawk, can be overridden to use UDP or other connection types
+    - gcs_url: Ground Control Station URL), empty by default for direct MAVROS connection
+    - tgt_system, tgt_component: Target system and component IDs for MAVLink comm defaultto 1 (common for single drone)
+    - fcu_protocol: MAVLink protocol ver, defaultto v2.0 for  modern flight controllers
+    - open_rviz: Boolean argument to control whether RViz should be launched automatically, default true
+  -->
+  <arg name="fcu_url" default="/dev/ttyACM0:57600"/>
+  <arg name="gcs_url" default=""/>
+  <arg name="tgt_system" default="1"/>
+  <arg name="tgt_component" default="1"/>
+  <arg name="fcu_protocol" default="v2.0"/>
+  <arg name="open_rviz" default="true"/>
+
+  <!-- Include the standard MAVROS launch file for PX4 
+    Set up MAVROS node with the specified connection params, allowing it to commu with flight controller and publish odometry, state, etc.
+  -->
+  <include file="$(find mavros)/launch/px4.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+    <arg name="gcs_url" value="$(arg gcs_url)"/>
+    <arg name="tgt_system" value="$(arg tgt_system)"/>
+    <arg name="tgt_component" value="$(arg tgt_component)"/>
+    <arg name="fcu_protocol" value="$(arg fcu_protocol)"/>
+  </include>
+
+  <!-- Robot State Publisher to publish the drone's URDF model 
+    Loads URDF from a xacro file and publishes the robot state (joint states, transforms) to TF, allowing RViz to visualize the drone model based on its current state.
+  -->
+  <param name="robot_description"
+         command="$(find xacro)/xacro '$(find drone_viz)/urdf/drone_model.xacro'"/>
+
+  <!-- Custom node to bridge MAVROS odometry data to TF 
+    This node subscribes to the MAVROS odometry topic, converts odometry data into TF transforms, and publishes them so that RViz can visualize the drone's pos and orientation.
+  -->
+  <node pkg="robot_state_publisher"
+        type="robot_state_publisher"
+        name="robot_state_publisher"
+        output="screen"/>
+
+  <node pkg="drone_viz"
+        type="mavros_tf_bridge.py"
+        name="mavros_tf_bridge"
+        output="screen">
+    <param name="source_topic" value="/mavros/local_position/odom"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="base_frame" value="base_link"/>
+    <param name="publish_odom_topic" value="/drone_viz/odom"/>
+  </node>
+
+  <!-- Optional RViz node to visualize the drone in 3D 
+    This node launch RViz with a pre-configured visualization setup (drone_viz.rviz) that includes displays for the drone model, TF frames, etc. Controlled by the 'open_rviz', allowing users to choose whether to launch RViz automatically.
+
+    "-d $(find drone_viz)/rviz/drone_viz.rviz" tells RViz to load a specific config file that sets up the visualization envfor the drone. includse cams, display settings, and which topics to visualize.
+  -->
+  <node if="$(arg open_rviz)"
+        pkg="rviz"
+        type="rviz"
+        name="rviz"
+        args="-d $(find drone_viz)/rviz/drone_viz.rviz"
+        output="screen"/>
+</launch>

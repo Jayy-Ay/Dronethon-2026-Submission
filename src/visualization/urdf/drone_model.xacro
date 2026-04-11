@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+This Xacro is atiny drone model
+Xacro allows us to define a simple URDF model with parameters
+Used as visual representation of the drone's orientation and movement. Used in `bringup.launch`
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="pixhawk_drone">
+  <material name="body_grey">
+    <color rgba="0.20 0.20 0.20 1.0"/>
+  </material>
+
+  <material name="nose_blue">
+    <color rgba="0.20 0.50 0.90 1.0"/>
+  </material>
+
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.35 0.25 0.08"/>
+      </geometry>
+      <material name="body_grey"/>
+    </visual>
+  </link>
+
+  <link name="nose_link">
+    <visual>
+      <geometry>
+        <box size="0.08 0.06 0.04"/>
+      </geometry>
+      <material name="nose_blue"/>
+    </visual>
+  </link>
+
+  <joint name="nose_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="nose_link"/>
+    <origin xyz="0.20 0 0.01" rpy="0 0 0"/>
+  </joint>
+</robot>
