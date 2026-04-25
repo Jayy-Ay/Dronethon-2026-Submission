@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
 
 
 FAMILY_MAP = {
+    "4x4_50": cv2.aruco.DICT_4X4_50,
+    "5x5_100": cv2.aruco.DICT_5X5_100,
+    "6x6_250": cv2.aruco.DICT_6X6_250,
     "tag36h11": cv2.aruco.DICT_APRILTAG_36h11,
     "tag25h9": cv2.aruco.DICT_APRILTAG_25h9,
     "tag16h5": cv2.aruco.DICT_APRILTAG_16h5,
@@ -24,6 +27,7 @@ class ArucoDetection:
     center_x: float
     center_y: float
     area_px: float
+    corners: Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float]]
 
     def to_dict(self) -> Dict[str, float | int]:
         return {
@@ -43,7 +47,14 @@ class ArucoDetector:
             raise ValueError(f"Unsupported family '{family}'. Choose from: {choices}")
 
         aruco_dict = cv2.aruco.getPredefinedDictionary(FAMILY_MAP[family])
-        self._detector = cv2.aruco.ArucoDetector(aruco_dict, cv2.aruco.DetectorParameters())
+        params = cv2.aruco.DetectorParameters()
+        params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        params.adaptiveThreshWinSizeMin = 3
+        params.adaptiveThreshWinSizeMax = 23
+        params.adaptiveThreshWinSizeStep = 10
+        params.minMarkerPerimeterRate = 0.02
+        params.maxMarkerPerimeterRate = 5.0
+        self._detector = cv2.aruco.ArucoDetector(aruco_dict, params)
 
     def detect(self, frame: np.ndarray) -> List[ArucoDetection]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -63,6 +74,7 @@ class ArucoDetector:
                     center_x=float(center[0]),
                     center_y=float(center[1]),
                     area_px=area,
+                    corners=tuple((float(x), float(y)) for x, y in pts),
                 )
             )
 

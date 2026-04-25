@@ -15,7 +15,7 @@ import numpy as np
 
 from src.stages.aruco_detector import ArucoDetection, ArucoDetector
 from src.stages.yolo_detector import YoloDetection, YoloDetector
-from src.vision.frame_provider import StreamFrameProvider
+from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
 
 
 T = TypeVar("T")
@@ -90,6 +90,11 @@ class DetectorWorker(Generic[T]):
 class Args:
     bind_ip: str
     video_port: int
+    rtsp_url: Optional[str]
+    rtsp_width: int
+    rtsp_height: int
+    frame_timeout: float
+    max_no_frame_seconds: float
     family: str
     show: bool
     aruco_rate: float
@@ -105,6 +110,16 @@ def parse_args() -> Args:
     parser = argparse.ArgumentParser(description="Receive Pi stream and run threaded ArUco + YOLO on PC")
     parser.add_argument("--bind-ip", default="0.0.0.0", help="PC IP to bind for incoming video")
     parser.add_argument("--video-port", type=int, default=5600, help="UDP port to receive video")
+    parser.add_argument("--rtsp-url", default=None, help="Optional RTSP camera URL from the Pi/go2rtc feed")
+    parser.add_argument("--rtsp-width", type=int, default=1280, help="Width to request from ffmpeg RTSP stream")
+    parser.add_argument("--rtsp-height", type=int, default=720, help="Height to request from ffmpeg RTSP stream")
+    parser.add_argument("--frame-timeout", type=float, default=3.0, help="Seconds to wait for a frame before retrying")
+    parser.add_argument(
+        "--max-no-frame-seconds",
+        type=float,
+        default=30.0,
+        help="Exit if no frame is received for this many seconds",
+    )
     parser.add_argument("--family", default="tag36h11", help="ArUco/AprilTag family")
     parser.add_argument("--show", action="store_true", help="Show annotated local preview")
 
@@ -121,6 +136,11 @@ def parse_args() -> Args:
     return Args(
         bind_ip=ns.bind_ip,
         video_port=ns.video_port,
+        rtsp_url=ns.rtsp_url,
+        rtsp_width=ns.rtsp_width,
+        rtsp_height=ns.rtsp_height,
+        frame_timeout=ns.frame_timeout,
+        max_no_frame_seconds=ns.max_no_frame_seconds,
         family=ns.family,
         show=ns.show,
         aruco_rate=ns.aruco_rate,
@@ -137,12 +157,14 @@ def draw_overlays(frame: np.ndarray, aruco_dets: List[ArucoDetection], yolo_dets
     vis = frame.copy()
 
     for det in aruco_dets:
+        pts = np.array(det.corners, dtype=np.int32).reshape((-1, 1, 2))
+        cv2.polylines(vis, [pts], True, (0, 255, 0), 2)
         x = int(det.center_x)
         y = int(det.center_y)
         cv2.circle(vis, (x, y), 5, (0, 255, 0), -1)
         cv2.putText(
             vis,
-            f"ARUCO {det.tag_id}",
+            f"ARUCO {det.tag_id} area={det.area_px:.0f}",
             (x + 8, y - 8),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
@@ -165,10 +187,17 @@ def draw_overlays(frame: np.ndarray, aruco_dets: List[ArucoDetection], yolo_dets
     return vis
 
 
+
 def main() -> None:
     args = parse_args()
 
-    provider = StreamFrameProvider(ip=args.bind_ip, port=args.video_port)
+    if args.rtsp_url:
+        provider = RtspFrameProvider(args.rtsp_url, width=args.rtsp_width, height=args.rtsp_height)
+        print(f"Receiving RTSP frames from {args.rtsp_url}")
+    else:
+        provider = StreamFrameProvider(ip=args.bind_ip, port=args.video_port)
+        print(f"Listening for UDP video stream on {args.bind_ip}:{args.video_port}")
+
     aruco_detector = ArucoDetector(family=args.family)
 
     yolo_detector = None
@@ -196,16 +225,33 @@ def main() -> None:
         yolo_worker = DetectorWorker("yolo", yolo_detector.detect, rate_hz=args.yolo_rate)
         yolo_worker.start()
 
-    print(f"Listening for Pi video stream on {args.bind_ip}:{args.video_port}")
     print("Running ArUco and YOLO in separate detector threads on PC")
 
     last_log = 0.0
+    last_frame_time = time.time()
+    last_no_frame_log = 0.0
     try:
         while True:
-            frame = provider.get_frame_with_timeout(timeout=2.0)
+            frame = provider.get_frame_with_timeout(timeout=args.frame_timeout)
             if frame is None:
-                print("No frame received from Pi stream")
-                break
+                now = time.time()
+                gap = now - last_frame_time
+                if now - last_no_frame_log >= 2.0:
+                    print(
+                        "Waiting for Pi stream frame... "
+                        f"no-frame-for={gap:.1f}s "
+                        f"(timeout={args.frame_timeout:.1f}s)"
+                    )
+                    last_no_frame_log = now
+                if gap >= args.max_no_frame_seconds:
+                    print(
+                        "No frame received from Pi stream for too long; "
+                        f"stopping after {gap:.1f}s"
+                    )
+                    break
+                continue
+
+            last_frame_time = time.time()
 
             aruco_worker.submit(frame)
             if yolo_worker is not None:
@@ -217,6 +263,9 @@ def main() -> None:
             now = time.time()
             if now - last_log >= 1.0:
                 print(f"aruco={len(aruco_dets)} yolo={len(yolo_dets)}")
+                if aruco_dets:
+                    ids = ",".join(str(det.tag_id) for det in aruco_dets)
+                    print(f"aruco_ids={ids}")
                 if aruco_worker.last_error() is not None:
                     print(aruco_worker.last_error())
                 if yolo_worker is not None and yolo_worker.last_error() is not None:

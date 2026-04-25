@@ -1,12 +1,16 @@
 import cv2
 import numpy as np
+from pathlib import Path
+
+from src.vision.frame_provider import RtspFrameProvider
 
 # ── Config ────────────────────────────────────────────────
+DEFAULT_STREAM = "rtsp://dronetastic.local:8554/cam1"
 MODEL_PATH = "yolov8s-seg.onnx"
-INPUT_SIZE  = 320
+INPUT_SIZE = 320
 CONF_THRESH = 0.4
-IOU_THRESH  = 0.45
-CLASSES     = open(r"C:\Users\totin\OneDrive\Работен плот\Yolo8 into opencv\Libraryfolder\coco.names").read().strip().split("\n")
+IOU_THRESH = 0.45
+CLASSES = Path(__file__).with_name("coco.names").read_text(encoding="utf-8").strip().splitlines()
 
 # Random colors for each class
 np.random.seed(42)
@@ -127,13 +131,17 @@ def draw(frame, detections):
 # ── Load model ────────────────────────────────────────────
 net = cv2.dnn.readNetFromONNX(MODEL_PATH)
 
-# ── Open webcam ───────────────────────────────────────────
-cap = cv2.VideoCapture(0)
+# ── Open RTSP stream ──────────────────────────────────────
+provider = RtspFrameProvider(DEFAULT_STREAM, width=1280, height=720)
+frame = provider.get_frame_with_timeout(timeout=5.0)
+
+if frame is None:
+    raise RuntimeError(f"Failed to read initial frame from {DEFAULT_STREAM}")
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    frame = provider.get_frame()
+    if frame is None:
+        continue
 
     input_img, scale, pad_left, pad_top = preprocess(frame, INPUT_SIZE)
     blob = cv2.dnn.blobFromImage(input_img, 1/255.0, (INPUT_SIZE, INPUT_SIZE), swapRB=True)
@@ -147,5 +155,5 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-cap.release()
+provider.close()
 cv2.destroyAllWindows()

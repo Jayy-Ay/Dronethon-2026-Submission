@@ -1,4 +1,10 @@
-# Computer vision package initialization
-from .cloud_point_demo import *
-from .depth_processor import *
-from .frame_provider import *
+"""Computer vision package initialization."""
+
+from .frame_provider import RtspFrameProvider, StreamFrameProvider, VideoFileFrameProvider, WebcamFrameProvider
+
+__all__ = [
+	"RtspFrameProvider",
+	"StreamFrameProvider",
+	"VideoFileFrameProvider",
+	"WebcamFrameProvider",
+]

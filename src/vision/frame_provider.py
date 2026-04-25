@@ -2,12 +2,60 @@ import cv2
 import socket
 import numpy as np
 import struct
+import subprocess
+import threading
 import time
 from collections import defaultdict
-import threading
+from typing import Optional
 
 
 FRAME_TIMEOUT = 0.2  # 200ms timeout
+
+
+def _start_ffmpeg_stream(url, width, height):
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-rtsp_transport", "tcp",
+        "-fflags", "nobuffer",
+        "-flags", "low_delay",
+        "-analyzeduration", "0",
+        "-probesize", "32",
+        "-i", url,
+        "-vf", f"scale={width}:{height}",
+        "-pix_fmt", "bgr24",
+        "-vcodec", "rawvideo",
+        "-f", "rawvideo",
+        "pipe:1",
+    ]
+
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=0,
+    )
+
+
+def _read_exact(stdout, size):
+    buf = b""
+    while len(buf) < size:
+        chunk = stdout.read(size - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _read_frame(stdout, width, height):
+    frame_size = width * height * 3
+    raw = _read_exact(stdout, frame_size)
+
+    if raw is None:
+        return None
+
+    return np.frombuffer(raw, np.uint8).reshape((height, width, 3))
 
 class StreamFrameProvider:
     """Video provider from raw UDP JPEG stream"""
@@ -131,6 +179,67 @@ class StreamFrameProvider:
 
     def close(self):
         self.sock.close()
+
+
+class RtspFrameProvider:
+    """Low-latency frame provider backed by an ffmpeg RTSP pipe."""
+
+    def __init__(self, url, width=1280, height=720):
+        self.url = url
+        self.width = width
+        self.height = height
+
+        self._lock = threading.Lock()
+        self._frame_ready = threading.Event()
+        self._stop = threading.Event()
+        self._process: Optional[subprocess.Popen] = None
+        self.latest_frame = None
+
+        self._thread = threading.Thread(target=self._receive_loop, daemon=True)
+        self._thread.start()
+
+    def get_frame(self):
+        return self.latest_frame
+
+    def get_frame_with_timeout(self, timeout=2.0):
+        if not self._frame_ready.wait(timeout=timeout):
+            return None
+        return self.get_frame()
+
+    def _receive_loop(self):
+        while not self._stop.is_set():
+            process = _start_ffmpeg_stream(self.url, self.width, self.height)
+            self._process = process
+
+            try:
+                while not self._stop.is_set():
+                    frame = _read_frame(process.stdout, self.width, self.height)
+                    if frame is None:
+                        break
+
+                    with self._lock:
+                        self.latest_frame = frame
+                        self._frame_ready.set()
+            finally:
+                self._terminate_process(process)
+
+            if not self._stop.is_set():
+                time.sleep(0.5)
+
+    def _terminate_process(self, process):
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def close(self):
+        self._stop.set()
+        process = self._process
+        if process is not None:
+            self._terminate_process(process)
+        self._thread.join(timeout=2.0)
 
 class WebcamFrameProvider:
     """Simple webcam frame provider"""
