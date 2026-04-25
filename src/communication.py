@@ -1,1 +1,0 @@
-# Communication and telemetry module

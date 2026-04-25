@@ -1,1 +1,0 @@
-# Sensor calibration script
