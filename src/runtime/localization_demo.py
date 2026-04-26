@@ -20,8 +20,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video-port", type=int, default=5600, help="UDP bind port when --rtsp-url is empty")
     parser.add_argument("--family", default="6x6_250", help="ArUco family")
     parser.add_argument("--marker-length-m", type=float, required=True, help="Printed marker edge length in meters")
-    parser.add_argument("--area-width-m", type=float, required=True, help="Distance from marker 0 center to marker 1 center")
-    parser.add_argument("--area-height-m", type=float, required=True, help="Distance from marker 0 center to marker 2 center")
+    parser.add_argument(
+        "--area-width-m",
+        type=float,
+        default=0.60,
+        help="Distance from marker 0 center to marker 1 center (default: 0.60 m)",
+    )
+    parser.add_argument(
+        "--area-height-m",
+        type=float,
+        default=0.60,
+        help="Distance from marker 0 center to marker 2 center (default: 0.60 m)",
+    )
     parser.add_argument("--camera-fx", type=float, required=True, help="Camera focal length fx in pixels")
     parser.add_argument("--camera-fy", type=float, required=True, help="Camera focal length fy in pixels")
     parser.add_argument("--camera-cx", type=float, default=0.0, help="Camera principal point cx in pixels")

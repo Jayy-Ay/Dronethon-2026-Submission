@@ -95,7 +95,7 @@ python -m src.runtime.pipeline --rtsp-url rtsp://dronetastic.local:8554/cam1 --r
 ArUco localisation:
 
 ```bash
-python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
 ```
 
 ## Start ArUco Only
@@ -143,13 +143,13 @@ Measure these values from your real setup:
 ### Recommended RTSP command
 
 ```bash
-python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
 ```
 
 ### UDP command
 
 ```bash
-python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-port 5600 --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-port 5600 --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
 ```
 
 ### What it does
