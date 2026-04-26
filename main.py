@@ -1,1 +1,1 @@
-# Main entry point for the drone control system
+"""Main entry point placeholder for the drone control system."""

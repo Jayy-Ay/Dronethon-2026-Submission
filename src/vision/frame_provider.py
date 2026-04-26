@@ -13,6 +13,7 @@ FRAME_TIMEOUT = 0.2  # 200ms timeout
 
 
 def _start_ffmpeg_stream(url, width, height):
+    """Launch ffmpeg to decode an RTSP stream into raw BGR frames on stdout."""
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -39,6 +40,7 @@ def _start_ffmpeg_stream(url, width, height):
 
 
 def _read_exact(stdout, size):
+    """Read an exact number of bytes from a pipe, or return None on EOF."""
     buf = b""
     while len(buf) < size:
         chunk = stdout.read(size - len(buf))
@@ -49,6 +51,7 @@ def _read_exact(stdout, size):
 
 
 def _read_frame(stdout, width, height):
+    """Read one raw BGR frame from an ffmpeg stdout pipe."""
     frame_size = width * height * 3
     raw = _read_exact(stdout, frame_size)
 
@@ -82,11 +85,12 @@ class StreamFrameProvider:
         self.IDENTIFIER = b"MJPG_HDR"
 
     def get_frame(self):
+        """Return the most recently assembled frame without blocking."""
         with self._lock:
             return self.latest_frame
 
     def _process_packet(self, packet):
-        """Extract the data from the packet and combine it with the correct frame"""
+        """Accumulate one UDP packet and decode the JPEG once all chunks arrive."""
         if len(packet) < self.HEADER_LENGTH:
             return None
 
@@ -147,6 +151,7 @@ class StreamFrameProvider:
             return self.latest_frame
 
     def _receive_loop(self):
+        """Receive UDP chunks forever and publish completed JPEG frames."""
         while True:
             try:
                 packet, _ = self.sock.recvfrom(65000)
@@ -164,12 +169,12 @@ class StreamFrameProvider:
                     self._frame_ready.notify_all()
 
     def start_receiver(self):
-        """Start a new thread to constantly receive packets"""
+        """Start the background thread that assembles incoming UDP frames."""
         thread = threading.Thread(target=self._receive_loop, daemon=True)
         thread.start()
 
     def _cleanup_old_frames(self):
-        """Remove frames that timed out before completion"""
+        """Drop incomplete frames that have exceeded the chunk assembly timeout."""
         now = time.time()
         expired_frames = []
 
@@ -184,6 +189,7 @@ class StreamFrameProvider:
             self.frame_timestamps.pop(frame_id, None)
 
     def close(self):
+        """Close the UDP socket used by the stream receiver."""
         self.sock.close()
 
 
@@ -207,10 +213,12 @@ class RtspFrameProvider:
         self._thread.start()
 
     def get_frame(self):
+        """Return the latest RTSP frame without waiting for a fresh one."""
         with self._lock:
             return self.latest_frame
 
     def get_frame_with_timeout(self, timeout=2.0):
+        """Wait for a new RTSP frame version, or return None on timeout."""
         deadline = time.time() + timeout
         with self._frame_ready:
             while self._frame_version <= self._last_consumed_version and not self._stop.is_set():
@@ -226,6 +234,7 @@ class RtspFrameProvider:
             return self.latest_frame
 
     def _receive_loop(self):
+        """Continuously reconnect to ffmpeg and publish frames until stopped."""
         while not self._stop.is_set():
             process = _start_ffmpeg_stream(self.url, self.width, self.height)
             self._process = process
@@ -247,6 +256,7 @@ class RtspFrameProvider:
                 time.sleep(0.5)
 
     def _terminate_process(self, process):
+        """Stop an ffmpeg subprocess, escalating to kill if needed."""
         if process.poll() is None:
             process.terminate()
             try:
@@ -255,6 +265,7 @@ class RtspFrameProvider:
                 process.kill()
 
     def close(self):
+        """Signal the receiver thread to stop and tear down ffmpeg cleanly."""
         self._stop.set()
         with self._frame_ready:
             self._frame_ready.notify_all()
@@ -266,6 +277,7 @@ class RtspFrameProvider:
 class WebcamFrameProvider:
     """Simple webcam frame provider"""
     def __init__(self, cam_index=0, flip_vertically=False):
+        """Open a local webcam device for synchronous frame reads."""
         self.cap = cv2.VideoCapture(cam_index)
         self.flip_vertically = flip_vertically
 
@@ -279,15 +291,18 @@ class WebcamFrameProvider:
         return frame
 
     def release(self):
+        """Release the webcam capture handle."""
         self.cap.release()
 
 class VideoFileFrameProvider:
     """Frame provider from a video file"""
     def __init__(self, filename, flip_vertically=False):
+        """Open a video file for sequential frame reads."""
         self.cap = cv2.VideoCapture(filename)
         self.flip_vertically = flip_vertically
 
     def get_frame(self):
+        """Return the next decoded frame from the file, or None at EOF."""
         ret, frame = self.cap.read()
         if not ret:
             return None
@@ -296,4 +311,5 @@ class VideoFileFrameProvider:
         return frame
 
     def release(self):
+        """Release the underlying video file handle."""
         self.cap.release()

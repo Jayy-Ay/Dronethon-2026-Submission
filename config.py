@@ -1,1 +1,1 @@
-# Configuration settings for the drone system
+"""Project-wide configuration placeholder for the drone system."""

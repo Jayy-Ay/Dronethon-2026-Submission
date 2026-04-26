@@ -1,11 +1,9 @@
 """Connection stage for drone runtime pipeline."""
 
 from __future__ import annotations
-
 import time
 from dataclasses import dataclass
 from typing import Any, Dict
-
 from src.core.communication import UDPTelemetrySender
 
 

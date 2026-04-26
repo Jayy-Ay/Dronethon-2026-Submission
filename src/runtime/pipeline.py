@@ -1,7 +1,6 @@
 """PC runtime pipeline: receive Pi frames and run ArUco + YOLO in separate threads."""
 
 from __future__ import annotations
-
 import argparse
 import queue
 import threading
@@ -9,10 +8,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Generic, List, Optional, TypeVar
-
 import cv2
 import numpy as np
-
 from src.stages.aruco_detector import ArucoDetection, ArucoDetector
 from src.stages.yolo_detector import YoloDetection, YoloDetector
 from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
@@ -62,13 +59,16 @@ class DetectorWorker(Generic[T]):
         self._last_error: Optional[str] = None
 
     def start(self) -> None:
+        """Start the detector worker thread."""
         self._thread.start()
 
     def stop(self) -> None:
+        """Request shutdown and wait briefly for the worker to exit."""
         self._stop.set()
         self._thread.join(timeout=2.0)
 
     def submit(self, frame_id: int, frame: np.ndarray) -> None:
+        """Queue the newest frame, replacing any stale pending task."""
         task = FrameTask(frame_id=frame_id, frame=frame)
         try:
             self._queue.put_nowait(task)
@@ -80,14 +80,17 @@ class DetectorWorker(Generic[T]):
             self._queue.put_nowait(task)
 
     def latest(self) -> List[T]:
+        """Return a snapshot of the most recent successful detector output."""
         with self._lock:
             return list(self._latest)
 
     def last_error(self) -> Optional[str]:
+        """Return the latest detector exception string, if any."""
         with self._lock:
             return self._last_error
 
     def _run(self) -> None:
+        """Consume queued frames, run detection, and rate-limit the loop."""
         interval = 1.0 / self._rate_hz
         while not self._stop.is_set():
             try:
@@ -128,6 +131,7 @@ class FrameCache:
     _updated: threading.Condition = field(init=False)
 
     def __post_init__(self) -> None:
+        """Create the condition variable after the lock dataclass field exists."""
         self._updated = threading.Condition(self._lock)
 
     def publish_aruco(self, frame_id: int, frame: np.ndarray, aruco_dets: List[ArucoDetection]) -> None:
@@ -139,6 +143,7 @@ class FrameCache:
         self._publish_result(frame_id, frame, "yolo", yolo_dets)
 
     def _publish_result(self, frame_id: int, frame: np.ndarray, detector: str, detections: List[object]) -> None:
+        """Merge one detector result and publish once all required detectors agree on a frame."""
         with self._updated:
             if frame_id <= self.latest_frame_id:
                 return
@@ -174,6 +179,7 @@ class FrameCache:
             self._updated.notify_all()
 
     def _is_complete(self, pending: PendingFrame) -> bool:
+        """Return whether all enabled detector outputs have arrived for a frame."""
         if "aruco" in self.expected_detectors and pending.aruco_dets is None:
             return False
         if "yolo" in self.expected_detectors and pending.yolo_dets is None:
@@ -181,6 +187,7 @@ class FrameCache:
         return True
 
     def _trim_pending_locked(self, keep_latest: int = 8) -> None:
+        """Bound pending frame memory while holding the cache lock."""
         if len(self._pending) <= keep_latest:
             return
 
@@ -224,9 +231,11 @@ class DisplayWorker:
         self._thread = threading.Thread(target=self._run, daemon=True, name="display")
 
     def start(self) -> None:
+        """Start the display thread."""
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop the display loop and wake any thread blocked on frame updates."""
         self._stop.set()
         self._cache.close()
         self._thread.join(timeout=2.0)
@@ -282,6 +291,7 @@ class Args:
 
 
 def parse_args() -> Args:
+    """Parse CLI flags into the strongly typed Args dataclass."""
     parser = argparse.ArgumentParser(description="Receive Pi stream and run threaded ArUco + YOLO on PC")
     parser.add_argument("--bind-ip", default="0.0.0.0", help="PC IP to bind for incoming video")
     parser.add_argument("--video-port", type=int, default=5600, help="UDP port to receive video")
@@ -339,6 +349,7 @@ def parse_args() -> Args:
 
 
 def draw_overlays(frame: np.ndarray, aruco_dets: List[ArucoDetection], yolo_dets: List[YoloDetection]) -> np.ndarray:
+    """Draw ArUco poses and YOLO boxes onto a copy of the current frame."""
     vis = frame.copy()
 
     for det in aruco_dets:
@@ -388,8 +399,10 @@ def draw_overlays(frame: np.ndarray, aruco_dets: List[ArucoDetection], yolo_dets
 
 
 def main() -> None:
+    """Run the threaded PC-side detection pipeline until interrupted."""
     args = parse_args()
 
+    # Stage 1: Choose the upstream frame source, either RTSP or the UDP stream from the Pi.
     if args.rtsp_url:
         provider = RtspFrameProvider(args.rtsp_url, width=args.rtsp_width, height=args.rtsp_height)
         print(f"Receiving RTSP frames from {args.rtsp_url}")
@@ -397,6 +410,7 @@ def main() -> None:
         provider = StreamFrameProvider(ip=args.bind_ip, port=args.video_port)
         print(f"Listening for UDP video stream on {args.bind_ip}:{args.video_port}")
 
+    # Stage 2: Build camera intrinsics for pose estimation when calibration values are available.
     camera_matrix = None
     if args.camera_fx > 0 and args.camera_fy > 0:
         cx = args.camera_cx if args.camera_cx > 0 else args.rtsp_width / 2.0
@@ -406,12 +420,14 @@ def main() -> None:
             dtype=np.float32,
         )
 
+    # Stage 3: Construct the ArUco detector, which is always enabled in this pipeline.
     aruco_detector = ArucoDetector(
         family=args.family,
         marker_length_m=args.marker_length_m,
         camera_matrix=camera_matrix,
     )
 
+    # Stage 4: Optionally enable YOLO if the model assets are present on disk.
     yolo_detector = None
     yolo_model_path = Path(args.yolo_model)
     yolo_classes_path = Path(args.yolo_classes)
@@ -429,12 +445,14 @@ def main() -> None:
             f"model={yolo_model_path} classes={yolo_classes_path}"
         )
 
+    # Stage 5: Define which detector results must arrive before a frame is display-ready.
     expected_detectors = {"aruco"}
     if yolo_detector is not None:
         expected_detectors.add("yolo")
 
     cache = FrameCache(expected_detectors=frozenset(expected_detectors))
 
+    # Stage 6: Start the dedicated detector threads so inference runs off the main ingest loop.
     aruco_worker = DetectorWorker(
         "aruco",
         aruco_detector.detect,
@@ -453,6 +471,7 @@ def main() -> None:
         )
         yolo_worker.start()
 
+    # Stage 7: Optionally start a display thread that waits for synchronized detector outputs.
     print("Running ArUco and YOLO in separate detector threads on PC")
     if args.show:
         print("Running display in separate thread")
@@ -467,11 +486,13 @@ def main() -> None:
     last_no_frame_log = 0.0
     frame_id = 0
     try:
+        # Stage 8: Main ingest loop. Pull frames, hand them to detector workers, and monitor health.
         while True:
             frame = provider.get_frame_with_timeout(timeout=args.frame_timeout)
             if frame is None:
                 now = time.time()
                 gap = now - last_frame_time
+                # Stage 8a: Handle stalls in the upstream stream and stop after a prolonged outage.
                 if now - last_no_frame_log >= 2.0:
                     print(
                         "Waiting for Pi stream frame... "
@@ -489,16 +510,19 @@ def main() -> None:
 
             last_frame_time = time.time()
 
+            # Stage 8b: Fan out the newest frame to each detector thread using the shared frame ID.
             aruco_worker.submit(frame_id, frame)
             if yolo_worker is not None:
                 yolo_worker.submit(frame_id, frame)
             frame_id += 1
 
+            # Stage 8c: Read the latest completed detector outputs for logging and quick visibility.
             aruco_dets = aruco_worker.latest()
             yolo_dets = yolo_worker.latest() if yolo_worker is not None else []
 
             now = time.time()
             if now - last_log >= 1.0:
+                # Stage 8d: Emit a lightweight heartbeat so we can see detections and worker failures.
                 print(f"aruco={len(aruco_dets)} yolo={len(yolo_dets)}")
                 if aruco_dets:
                     ids = ",".join(str(det.tag_id) for det in aruco_dets)
@@ -520,6 +544,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nStopping pipeline")
     finally:
+        # Stage 9: Tear everything down in dependency order so threads exit cleanly.
         provider.close()
         aruco_worker.stop()
         if yolo_worker is not None:

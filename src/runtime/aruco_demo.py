@@ -1,20 +1,18 @@
 """ArUco-only demo runtime for live preview from Pi RTSP or UDP stream."""
 
 from __future__ import annotations
-
 import argparse
 import time
 from pathlib import Path
 from typing import Optional
-
 import cv2
 import numpy as np
-
 from src.stages.aruco_detector import ArucoDetection, ArucoDetector
 from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI options for the standalone ArUco preview demo."""
     parser = argparse.ArgumentParser(description="Run ArUco-only detection demo")
     parser.add_argument("--rtsp-url", default="rtsp://dronetastic.local:8554/cam1", help="Optional RTSP URL")
     parser.add_argument("--rtsp-width", type=int, default=1280, help="RTSP decode width")
@@ -34,6 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def draw_aruco_overlays(frame: np.ndarray, detections: list[ArucoDetection]) -> np.ndarray:
+    """Render marker outlines, IDs, and optional pose estimates on a frame."""
     vis = frame.copy()
     for det in detections:
         pts = np.array(det.corners, dtype=np.int32).reshape((-1, 1, 2))
@@ -68,6 +67,7 @@ def draw_aruco_overlays(frame: np.ndarray, detections: list[ArucoDetection]) -> 
 
 
 def main() -> None:
+    """Run the ArUco-only demo loop against RTSP or UDP video input."""
     args = parse_args()
 
     provider: RtspFrameProvider | StreamFrameProvider

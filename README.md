@@ -16,6 +16,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - [Setup](#setup)
 - [Quick Start](#quick-start)
 - [Start ArUco Only](#start-aruco-only)
+- [Start ArUco Localisation](#start-aruco-localisation)
 - [Start ArUco--YOLOv8](#start-arucoyolov8)
 - [Optional Telemetry](#optional-telemetry)
 - [Generate Markers](#generate-markers)
@@ -33,8 +34,10 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 ## Project Layout
 
 - `src/runtime/aruco_demo.py`: ArUco-only runtime
+- `src/runtime/localization_demo.py`: ArUco world-frame localisation runtime
 - `src/runtime/pipeline.py`: ArUco + YOLOv8 runtime
 - `src/stages/aruco_detector.py`: ArUco / AprilTag detector
+- `src/localization/aruco_localizer.py`: multi-marker world pose estimation
 - `src/stages/yolo_detector.py`: YOLO detector
 - `src/vision/frame_provider.py`: RTSP and UDP frame input
 - `scripts/download_yolo_onnx.py`: download or export a YOLO ONNX model
@@ -89,6 +92,12 @@ ArUco + YOLOv8:
 python -m src.runtime.pipeline --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --family tag36h11 --yolo-model yolov8s.onnx --yolo-classes coco.names --yolo-input 640 --show
 ```
 
+ArUco localisation:
+
+```bash
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+```
+
 ## Start ArUco Only
 
 Use this when you want marker detection without YOLO.
@@ -110,6 +119,53 @@ python -m src.runtime.aruco_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 -
 - Default ArUco family in `aruco_demo` is `6x6_250`
 - Press `q` or `Esc` to close the preview
 - If you are using a different marker family, change `--family` to match it
+
+## Start ArUco Localisation
+
+Use this when you want the camera or drone position in a shared floor coordinate system defined by the fixed ArUco markers.
+
+### World frame
+
+- Marker `0` is the world origin `(0, 0, 0)`
+- `+X` points from marker `0` toward marker `1`
+- `+Y` points from marker `0` toward marker `2`
+- `+Z` points upward from the floor
+
+### Before you run it
+
+Measure these values from your real setup:
+
+- `--marker-length-m`: physical edge length of one printed ArUco marker
+- `--area-width-m`: center-to-center distance from marker `0` to marker `1`
+- `--area-height-m`: center-to-center distance from marker `0` to marker `2`
+- `--camera-fx`, `--camera-fy`, `--camera-cx`, `--camera-cy`: calibrated camera intrinsics
+
+### Recommended RTSP command
+
+```bash
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+```
+
+### UDP command
+
+```bash
+python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-port 5600 --marker-length-m 0.10 --area-width-m 2.00 --area-height-m 1.50 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+```
+
+### What it does
+
+- Detects visible ArUco markers in each frame
+- Matches marker IDs against the known floor map
+- Solves for one camera pose in world coordinates using one or more markers
+- Prints world-frame camera position in meters
+- Shows reprojection error as a simple quality signal
+
+### Notes
+
+- Replace the example dimensions and intrinsics with your real measurements
+- If only one marker is visible, pose will usually be noisier than with two or more markers
+- This demo currently assumes zero distortion coefficients, so it is best paired with a later calibration-file upgrade
+- Press `q` or `Esc` to close the preview
 
 ## Start ArUco + YOLOv8
 

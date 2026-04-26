@@ -25,9 +25,11 @@ import tf2_ros                                 # ROS TF library for broadcasting
 from geometry_msgs.msg import TransformStamped # Message type for transform between two frames
 from nav_msgs.msg import Odometry              # Message type for odominformation (pos, orientation, vel)   
 
-"""Normalizes MAVROS odometry into TF plus a debug odometry topic."""
 class MavrosTfBridge:
+    """Normalize MAVROS odometry frames and rebroadcast them as TF."""
+
     def __init__(self):
+        """Create ROS publishers, subscribers, and frame-name configuration."""
         self.source_topic = rospy.get_param("~source_topic", "/mavros/local_position/odom")
         self.odom_frame = rospy.get_param("~odom_frame", "odom")
         self.base_frame = rospy.get_param("~base_frame", "base_link")
@@ -38,8 +40,8 @@ class MavrosTfBridge:
         self.sub = rospy.Subscriber(self.source_topic, Odometry, self.odom_callback, queue_size=50)
         rospy.loginfo("mavros_tf_bridge listening on %s", self.source_topic)
 
-    """Republish MAVROS odometry with consistent frames and broadcast TF."""
     def odom_callback(self, msg):
+        """Republish incoming odometry and broadcast the matching base_link transform."""
         normalized = Odometry()
         normalized.header = msg.header
         normalized.header.frame_id = self.odom_frame # The frame that represents world/ground (e.g. "odom")
@@ -66,6 +68,7 @@ class MavrosTfBridge:
 
     @staticmethod
     def _has_valid_quaternion(transform):
+        """Return True when the transform rotation contains a non-zero quaternion."""
         q = transform.transform.rotation
         norm_sq = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w
         return norm_sq > 1e-12

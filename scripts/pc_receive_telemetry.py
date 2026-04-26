@@ -4,7 +4,6 @@
 import argparse
 import json
 import time
-
 from src.core.communication import UDPTelemetryReceiver
 
 

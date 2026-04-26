@@ -9,8 +9,11 @@ MAX_UDP_PAYLOAD = 60000  # safe chunk size
 
 
 class UdpVideoStreamer:
+    """Capture webcam frames, JPEG-encode them, and stream them over UDP."""
+
     def __init__(self, dest_ip="127.0.0.1", port=5600,
                  width=640, height=480, fps=30, quality=80):
+        """Configure the capture device and UDP transport parameters."""
         self.dest_ip = dest_ip
         self.port = port
         self.width = width
@@ -28,15 +31,8 @@ class UdpVideoStreamer:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
 
-        """
-        cv2 has predifined resolutions @ fps
-        if the input resolution and fps aren't predifined
-        cv2 will pick the closest?
-
-        preset formats can be checked with:
-        sudo apt install v4l-utils
-        v4l2-ctl --list-formats-ext
-        """
+        # OpenCV may negotiate the nearest camera mode rather than the exact
+        # requested width, height, and FPS, so read back the accepted values.
         self.width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         self.height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -45,6 +41,7 @@ class UdpVideoStreamer:
         self.IDENTIFIER = b"MJPG_HDR" # Should be 8 chars long - or we got problems
 
     def start(self):
+        """Run the capture loop until interrupted or frame capture fails."""
         print(f"Streaming to {self.dest_ip}:{self.port}")
         print(f"Resolution: {self.width}x{self.height} @ {self.fps} FPS")
         print(f"JPEG Quality: {self.quality}")
@@ -83,6 +80,7 @@ class UdpVideoStreamer:
             self.sock.close()
 
     def send_frame_fragmented(self, frame_bytes):
+        """Split one JPEG frame into UDP-safe chunks and send them in order."""
         frame_id = self.frame_id
         self.frame_id += 1
 
@@ -112,6 +110,7 @@ class UdpVideoStreamer:
 
 
 def main():
+    """Parse CLI arguments and start the UDP video streamer."""
     parser = argparse.ArgumentParser(description="UDP MJPEG Video Streamer")
 
     parser.add_argument("--ip", default="127.0.0.1",

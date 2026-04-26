@@ -27,8 +27,33 @@ __pycache__/
 *.log
 *.DS_Store
 .env
+.env.*
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.python-version
 .idea/
 .vscode/
+*.code-workspace
+
+# Generated project artifacts
+artifacts/aruco_crops/
+artifacts/aruco_markers/
+marker_*.png
+
+# ROS / CMake / Catkin build outputs
+build/
+devel/
+install/
+log/
+.catkin_tools/
+cmake-build-*/
+compile_commands.json
+CATKIN_IGNORE
+
 !coco.names

@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from pathlib import Path
-
 from src.vision.frame_provider import RtspFrameProvider
 
 # ── Config ────────────────────────────────────────────────
@@ -18,6 +17,7 @@ COLORS = np.random.randint(0, 255, size=(len(CLASSES), 3), dtype=np.uint8)
 # ─────────────────────────────────────────────────────────
 
 def preprocess(img, input_size):
+    """Letterbox an image for YOLO input and return scale plus padding."""
     h, w = img.shape[:2]
     scale = input_size / max(h, w)
     nh, nw = int(h * scale), int(w * scale)
@@ -29,6 +29,7 @@ def preprocess(img, input_size):
     return canvas, scale, pad_left, pad_top
 
 def is_red(frame, box):
+    """Heuristically classify whether a detected region contains mostly red pixels."""
     x1, y1, x2, y2 = box
     roi = frame[y1:y2, x1:x2]
     if roi.size == 0:
@@ -45,6 +46,7 @@ def is_red(frame, box):
     return (red_pixels / total_pixels) > 0.3
 
 def postprocess(outputs, orig_shape, scale, pad_left, pad_top):
+    """Convert raw YOLOv8 segmentation outputs into detection dictionaries."""
     oh, ow = orig_shape[:2]
 
     pred = np.array(outputs[0])
@@ -107,6 +109,7 @@ def postprocess(outputs, orig_shape, scale, pad_left, pad_top):
     return results
 
 def draw(frame, detections):
+    """Render segmentation masks, boxes, and labels onto a frame copy."""
     overlay = frame.copy()
     for det in detections:
         x1, y1, x2, y2 = det["box"]

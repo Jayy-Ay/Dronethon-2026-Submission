@@ -1,11 +1,9 @@
 """YOLO detector running on PC-side frames."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-
 import cv2
 import numpy as np
 
@@ -34,6 +32,7 @@ class YoloDetector:
         conf_thresh: float = 0.35,
         nms_thresh: float = 0.45,
     ) -> None:
+        """Load the ONNX network and class labels for later frame inference."""
         model = Path(model_path)
         classes = Path(classes_path)
 
@@ -49,6 +48,7 @@ class YoloDetector:
         self._nms_thresh = float(nms_thresh)
 
     def _preprocess(self, frame: np.ndarray):
+        """Letterbox a frame and return the blob plus inverse mapping metadata."""
         h, w = frame.shape[:2]
         scale = self._input_size / max(h, w)
         nh, nw = int(h * scale), int(w * scale)
@@ -63,6 +63,7 @@ class YoloDetector:
         return blob, scale, pad_left, pad_top
 
     def _postprocess(self, output: np.ndarray, frame_shape, scale: float, pad_left: int, pad_top: int) -> List[YoloDetection]:
+        """Project raw model output back into image-space YoloDetection items."""
         h, w = frame_shape[:2]
         pred = np.array(output)
 
@@ -135,6 +136,7 @@ class YoloDetector:
         return detections
 
     def detect(self, frame: np.ndarray) -> List[YoloDetection]:
+        """Run one forward pass and return NMS-filtered detections for a frame."""
         blob, scale, pad_left, pad_top = self._preprocess(frame)
         self._net.setInput(blob)
         outputs = self._net.forward(self._net.getUnconnectedOutLayersNames())

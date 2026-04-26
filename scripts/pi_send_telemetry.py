@@ -4,7 +4,6 @@
 import argparse
 import random
 import time
-
 from src.core.communication import UDPTelemetrySender
 
 
