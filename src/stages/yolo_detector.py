@@ -3,7 +3,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import Any, List, Optional
 import cv2
 import numpy as np
 
@@ -22,7 +22,7 @@ class YoloDetection:
 
 
 class YoloDetector:
-    """OpenCV DNN-based YOLO detector for ONNX models."""
+    """YOLO detector supporting Ultralytics `.pt` and OpenCV DNN `.onnx` backends."""
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class YoloDetector:
         conf_thresh: float = 0.35,
         nms_thresh: float = 0.45,
     ) -> None:
-        """Load the ONNX network and class labels for later frame inference."""
+        """Load the model and class labels for later frame inference."""
         model = Path(model_path)
         classes = Path(classes_path)
 
@@ -41,16 +41,41 @@ class YoloDetector:
         if not classes.exists():
             raise FileNotFoundError(f"Class names file not found: {classes}")
 
-        self._net = cv2.dnn.readNetFromONNX(str(model))
+        self._backend = "ultralytics" if model.suffix.lower() == ".pt" else "opencv-dnn"
+        self._net: Optional[cv2.dnn.Net] = None
+        self._ultralytics_model: Optional[Any] = None
         self._labels = classes.read_text(encoding="utf-8").strip().splitlines()
         self._model_family = self._infer_model_family(model.stem.lower())
         self._input_size = int(input_size)
         self._conf_thresh = float(conf_thresh)
         self._nms_thresh = float(nms_thresh)
-        self._device = self._configure_inference_device()
+        self._device = self._configure_inference_device(model)
 
-    def _configure_inference_device(self) -> str:
+    def _configure_inference_device(self, model: Path) -> str:
         """Prefer CUDA inference by default, falling back to CPU when unavailable."""
+        if self._backend == "ultralytics":
+            return self._configure_ultralytics_backend(model)
+        return self._configure_opencv_backend(model)
+
+    def _configure_ultralytics_backend(self, model: Path) -> str:
+        """Load a PyTorch-backed YOLOv8 model and prefer CUDA when available."""
+        try:
+            import torch
+            from ultralytics import YOLO
+        except ImportError as exc:
+            raise ImportError(
+                "YOLO .pt models require both 'torch' and 'ultralytics' to be installed in the active environment."
+            ) from exc
+
+        self._ultralytics_model = YOLO(str(model))
+        if torch.cuda.is_available():
+            self._ultralytics_model.to("cuda:0")
+            return "cuda"
+        return "cpu"
+
+    def _configure_opencv_backend(self, model: Path) -> str:
+        """Load an ONNX network for OpenCV DNN inference."""
+        self._net = cv2.dnn.readNetFromONNX(str(model))
         cuda = getattr(cv2, "cuda", None)
         has_cuda_device = False
         if cuda is not None and hasattr(cuda, "getCudaEnabledDeviceCount"):
@@ -80,6 +105,11 @@ class YoloDetector:
     def device(self) -> str:
         """Return the active inference device."""
         return self._device
+
+    @property
+    def backend(self) -> str:
+        """Return the active inference backend."""
+        return self._backend
 
     def _preprocess(self, frame: np.ndarray):
         """Letterbox a frame and return the blob plus inverse mapping metadata."""
@@ -208,8 +238,58 @@ class YoloDetector:
 
     def detect(self, frame: np.ndarray) -> List[YoloDetection]:
         """Run one forward pass and return NMS-filtered detections for a frame."""
+        if self._backend == "ultralytics":
+            return self._detect_ultralytics(frame)
+
+        if self._net is None:
+            raise RuntimeError("OpenCV DNN backend was not initialized")
+
         blob, scale, pad_left, pad_top = self._preprocess(frame)
         self._net.setInput(blob)
         outputs = self._net.forward(self._net.getUnconnectedOutLayersNames())
         output = outputs[0] if isinstance(outputs, (list, tuple)) else outputs
         return self._postprocess(output, frame.shape, scale, pad_left, pad_top)
+
+    def _detect_ultralytics(self, frame: np.ndarray) -> List[YoloDetection]:
+        """Run YOLOv8 via Ultralytics and convert detections into the shared dataclass."""
+        if self._ultralytics_model is None:
+            raise RuntimeError("Ultralytics backend was not initialized")
+
+        results = self._ultralytics_model.predict(
+            source=frame,
+            imgsz=self._input_size,
+            conf=self._conf_thresh,
+            iou=self._nms_thresh,
+            device="cuda:0" if self._device == "cuda" else "cpu",
+            verbose=False,
+        )
+        if not results:
+            return []
+
+        result = results[0]
+        boxes = getattr(result, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return []
+
+        detections: List[YoloDetection] = []
+        names = result.names if hasattr(result, "names") else {}
+        xyxy = boxes.xyxy.detach().cpu().numpy()
+        confs = boxes.conf.detach().cpu().numpy()
+        class_ids = boxes.cls.detach().cpu().numpy().astype(int)
+
+        for coords, confidence, class_id in zip(xyxy, confs, class_ids):
+            x1, y1, x2, y2 = coords
+            label = names.get(class_id, f"class_{class_id}") if isinstance(names, dict) else f"class_{class_id}"
+            detections.append(
+                YoloDetection(
+                    class_id=int(class_id),
+                    label=str(label),
+                    confidence=float(confidence),
+                    x1=int(x1),
+                    y1=int(y1),
+                    x2=int(x2),
+                    y2=int(y2),
+                )
+            )
+
+        return detections

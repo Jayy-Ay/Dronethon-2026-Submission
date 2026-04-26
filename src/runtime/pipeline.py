@@ -270,7 +270,7 @@ def parse_args() -> Args:
     parser.add_argument("--aruco-rate", type=float, default=30.0, help="ArUco detection rate (Hz)")
     parser.add_argument("--yolo-rate", type=float, default=20.0, help="YOLO detection rate (Hz)")
 
-    parser.add_argument("--yolo-model", default="yolov8s.onnx", help="Path to YOLO ONNX model on PC")
+    parser.add_argument("--yolo-model", default="yolov8s.pt", help="Path to YOLO model on PC (.pt for CUDA via Ultralytics or .onnx for OpenCV DNN)")
     parser.add_argument("--yolo-classes", default="coco.names", help="Path to class names file on PC")
     parser.add_argument("--yolo-input", type=int, default=416, help="YOLO square input size")
     parser.add_argument("--yolo-conf", type=float, default=0.35, help="YOLO confidence threshold")
@@ -393,7 +393,10 @@ def main() -> None:
             conf_thresh=args.yolo_conf,
             nms_thresh=args.yolo_nms,
         )
-        print(f"YOLO inference device: {yolo_detector.device}")
+        print(
+            f"YOLO inference backend: {yolo_detector.backend} "
+            f"device: {yolo_detector.device}"
+        )
     else:
         print(
             "YOLO disabled: missing model/classes file. "

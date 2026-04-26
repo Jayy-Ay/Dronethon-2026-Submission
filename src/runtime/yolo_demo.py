@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rtsp-height", type=int, default=720, help="RTSP decode height")
     parser.add_argument("--bind-ip", default="0.0.0.0", help="UDP bind IP when --rtsp-url is empty")
     parser.add_argument("--video-port", type=int, default=5600, help="UDP bind port when --rtsp-url is empty")
-    parser.add_argument("--yolo-model", default="yolov8s.onnx", help="Path to YOLO ONNX model")
+    parser.add_argument("--yolo-model", default="yolov8s.pt", help="Path to YOLO model (.pt for CUDA via Ultralytics or .onnx for OpenCV DNN)")
     parser.add_argument("--yolo-classes", default="coco.names", help="Path to class labels file")
     parser.add_argument("--yolo-input", type=int, default=416, help="YOLO square input size")
     parser.add_argument("--yolo-conf", type=float, default=0.35, help="YOLO confidence threshold")
@@ -81,7 +81,10 @@ def main() -> None:
         nms_thresh=args.yolo_nms,
     )
 
-    print(f"YOLO demo running with model={args.yolo_model} device={detector.device}")
+    print(
+        f"YOLO demo running with model={args.yolo_model} "
+        f"backend={detector.backend} device={detector.device}"
+    )
 
     last_log = 0.0
     last_frame_time = time.time()
