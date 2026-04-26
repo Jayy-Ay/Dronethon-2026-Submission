@@ -43,9 +43,43 @@ class YoloDetector:
 
         self._net = cv2.dnn.readNetFromONNX(str(model))
         self._labels = classes.read_text(encoding="utf-8").strip().splitlines()
+        self._model_family = self._infer_model_family(model.stem.lower())
         self._input_size = int(input_size)
         self._conf_thresh = float(conf_thresh)
         self._nms_thresh = float(nms_thresh)
+        self._device = self._configure_inference_device()
+
+    def _configure_inference_device(self) -> str:
+        """Prefer CUDA inference by default, falling back to CPU when unavailable."""
+        cuda = getattr(cv2, "cuda", None)
+        has_cuda_device = False
+        if cuda is not None and hasattr(cuda, "getCudaEnabledDeviceCount"):
+            try:
+                has_cuda_device = cuda.getCudaEnabledDeviceCount() > 0
+            except cv2.error:
+                has_cuda_device = False
+
+        if has_cuda_device:
+            try:
+                self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+                target_fp16 = getattr(cv2.dnn, "DNN_TARGET_CUDA_FP16", None)
+                if target_fp16 is not None:
+                    self._net.setPreferableTarget(target_fp16)
+                    return "cuda-fp16"
+                self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+                return "cuda"
+            except cv2.error:
+                # Fall back when OpenCV exposes cv2.cuda but DNN CUDA support is not built in.
+                pass
+
+        self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        return "cpu"
+
+    @property
+    def device(self) -> str:
+        """Return the active inference device."""
+        return self._device
 
     def _preprocess(self, frame: np.ndarray):
         """Letterbox a frame and return the blob plus inverse mapping metadata."""
@@ -73,17 +107,22 @@ class YoloDetector:
             return []
 
         # Supports common ONNX layouts: [84, N] and [N, 84]
-        if pred.shape[0] <= 100 and pred.shape[1] > pred.shape[0]:
+        if pred.shape[0] <= 100 and pred.shape[1] > pred.shape[0] and pred.shape[1] > 100:
             pred = pred.T
 
         if pred.shape[1] < 6:
             return []
 
         boxes_xywh = pred[:, :4]
-        scores = pred[:, 4:]
-
-        class_ids = np.argmax(scores, axis=1)
-        confidences = scores[np.arange(scores.shape[0]), class_ids]
+        if pred.shape[1] >= 6 and self._uses_yolov5_scoring(pred):
+            objectness = pred[:, 4]
+            class_scores = pred[:, 5:]
+            class_ids = np.argmax(class_scores, axis=1)
+            confidences = objectness * class_scores[np.arange(class_scores.shape[0]), class_ids]
+        else:
+            class_scores = pred[:, 4:]
+            class_ids = np.argmax(class_scores, axis=1)
+            confidences = class_scores[np.arange(class_scores.shape[0]), class_ids]
         keep = confidences > self._conf_thresh
 
         if not np.any(keep):
@@ -134,6 +173,38 @@ class YoloDetector:
             )
 
         return detections
+
+    @staticmethod
+    def _infer_model_family(model_name: str) -> str:
+        """Infer the YOLO family from the model filename when possible."""
+        if "yolov5" in model_name:
+            return "yolov5"
+        if "yolov8" in model_name:
+            return "yolov8"
+        return "auto"
+
+    def _uses_yolov5_scoring(self, pred: np.ndarray) -> bool:
+        """Return whether detections should use YOLOv5 objectness * class score."""
+        if self._model_family == "yolov5":
+            return True
+        if self._model_family == "yolov8":
+            return False
+        return self._looks_like_yolov5(pred)
+
+    @staticmethod
+    def _looks_like_yolov5(pred: np.ndarray) -> bool:
+        """Heuristically identify YOLOv5-style output with objectness at index 4."""
+        if pred.shape[1] < 7:
+            return False
+
+        objectness = pred[:, 4]
+        if objectness.size == 0:
+            return False
+
+        return bool(
+            np.all((objectness >= 0.0) & (objectness <= 1.0))
+            and np.any(objectness > 0.0)
+        )
 
     def detect(self, frame: np.ndarray) -> List[YoloDetection]:
         """Run one forward pass and return NMS-filtered detections for a frame."""

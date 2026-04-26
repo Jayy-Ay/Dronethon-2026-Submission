@@ -26,15 +26,6 @@ class FrameTask:
     frame: np.ndarray
 
 
-@dataclass
-class PendingFrame:
-    """Detector outputs collected for a single frame ID."""
-
-    frame: np.ndarray
-    aruco_dets: Optional[List[ArucoDetection]] = None
-    yolo_dets: Optional[List[YoloDetection]] = None
-
-
 class DetectorWorker(Generic[T]):
     """Runs a detector continuously in its own thread on latest submitted frames."""
 
@@ -118,15 +109,13 @@ class DetectorWorker(Generic[T]):
 
 @dataclass
 class FrameCache:
-    """Thread-safe cache of latest fully synchronized processed frame."""
+    """Thread-safe cache of the latest frame plus freshest detector results."""
     frame: Optional[np.ndarray] = None
     aruco_dets: List[ArucoDetection] = field(default_factory=list)
     yolo_dets: List[YoloDetection] = field(default_factory=list)
-    expected_detectors: frozenset[str] = field(default_factory=frozenset)
     latest_frame_id: int = -1
     _version: int = 0
     _closed: bool = False
-    _pending: dict[int, PendingFrame] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _updated: threading.Condition = field(init=False)
 
@@ -135,65 +124,30 @@ class FrameCache:
         self._updated = threading.Condition(self._lock)
 
     def publish_aruco(self, frame_id: int, frame: np.ndarray, aruco_dets: List[ArucoDetection]) -> None:
-        """Store ArUco results and publish only when the frame is complete."""
+        """Store ArUco results and publish the freshest available combined view."""
         self._publish_result(frame_id, frame, "aruco", aruco_dets)
 
     def publish_yolo(self, frame_id: int, frame: np.ndarray, yolo_dets: List[YoloDetection]) -> None:
-        """Store YOLO results and publish only when the frame is complete."""
+        """Store YOLO results and publish the freshest available combined view."""
         self._publish_result(frame_id, frame, "yolo", yolo_dets)
 
     def _publish_result(self, frame_id: int, frame: np.ndarray, detector: str, detections: List[object]) -> None:
-        """Merge one detector result and publish once all required detectors agree on a frame."""
+        """Publish the newest frame immediately while keeping the latest results per detector."""
         with self._updated:
             if frame_id <= self.latest_frame_id:
                 return
 
-            pending = self._pending.get(frame_id)
-            if pending is None:
-                pending = PendingFrame(frame=frame)
-                self._pending[frame_id] = pending
-            else:
-                pending.frame = frame
-
             if detector == "aruco":
-                pending.aruco_dets = list(detections) if detections else []
+                self.aruco_dets = list(detections) if detections else []
             elif detector == "yolo":
-                pending.yolo_dets = list(detections) if detections else []
+                self.yolo_dets = list(detections) if detections else []
             else:
                 raise ValueError(f"Unsupported detector '{detector}'")
 
-            if not self._is_complete(pending):
-                self._trim_pending_locked()
-                return
-
-            self.frame = pending.frame
-            self.aruco_dets = list(pending.aruco_dets) if pending.aruco_dets is not None else []
-            self.yolo_dets = list(pending.yolo_dets) if pending.yolo_dets is not None else []
+            self.frame = frame
             self.latest_frame_id = frame_id
             self._version += 1
-
-            stale_ids = [pending_id for pending_id in self._pending if pending_id <= frame_id]
-            for pending_id in stale_ids:
-                del self._pending[pending_id]
-
             self._updated.notify_all()
-
-    def _is_complete(self, pending: PendingFrame) -> bool:
-        """Return whether all enabled detector outputs have arrived for a frame."""
-        if "aruco" in self.expected_detectors and pending.aruco_dets is None:
-            return False
-        if "yolo" in self.expected_detectors and pending.yolo_dets is None:
-            return False
-        return True
-
-    def _trim_pending_locked(self, keep_latest: int = 8) -> None:
-        """Bound pending frame memory while holding the cache lock."""
-        if len(self._pending) <= keep_latest:
-            return
-
-        stale_ids = sorted(self._pending)[:-keep_latest]
-        for pending_id in stale_ids:
-            del self._pending[pending_id]
 
     def get_latest(self) -> tuple[Optional[np.ndarray], List[ArucoDetection], List[YoloDetection]]:
         """Get current cached frame and detections."""
@@ -313,12 +267,12 @@ def parse_args() -> Args:
     parser.add_argument("--camera-cy", type=float, default=0.0, help="Camera principal point cy in pixels; 0 uses image center")
     parser.add_argument("--show", action="store_true", help="Show annotated local preview")
 
-    parser.add_argument("--aruco-rate", type=float, default=12.0, help="ArUco detection rate (Hz)")
-    parser.add_argument("--yolo-rate", type=float, default=8.0, help="YOLO detection rate (Hz)")
+    parser.add_argument("--aruco-rate", type=float, default=30.0, help="ArUco detection rate (Hz)")
+    parser.add_argument("--yolo-rate", type=float, default=20.0, help="YOLO detection rate (Hz)")
 
     parser.add_argument("--yolo-model", default="yolov8s.onnx", help="Path to YOLO ONNX model on PC")
     parser.add_argument("--yolo-classes", default="coco.names", help="Path to class names file on PC")
-    parser.add_argument("--yolo-input", type=int, default=640, help="YOLO square input size")
+    parser.add_argument("--yolo-input", type=int, default=416, help="YOLO square input size")
     parser.add_argument("--yolo-conf", type=float, default=0.35, help="YOLO confidence threshold")
     parser.add_argument("--yolo-nms", type=float, default=0.45, help="YOLO NMS threshold")
 
@@ -439,18 +393,15 @@ def main() -> None:
             conf_thresh=args.yolo_conf,
             nms_thresh=args.yolo_nms,
         )
+        print(f"YOLO inference device: {yolo_detector.device}")
     else:
         print(
             "YOLO disabled: missing model/classes file. "
             f"model={yolo_model_path} classes={yolo_classes_path}"
         )
 
-    # Stage 5: Define which detector results must arrive before a frame is display-ready.
-    expected_detectors = {"aruco"}
-    if yolo_detector is not None:
-        expected_detectors.add("yolo")
-
-    cache = FrameCache(expected_detectors=frozenset(expected_detectors))
+    # Stage 5: Cache the freshest frame plus the most recent outputs from each detector.
+    cache = FrameCache()
 
     # Stage 6: Start the dedicated detector threads so inference runs off the main ingest loop.
     aruco_worker = DetectorWorker(

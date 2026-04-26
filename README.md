@@ -3,10 +3,10 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-PC%20%2B%20Raspberry%20Pi-green)
 ![Vision](https://img.shields.io/badge/Vision-ArUco%20%2F%20AprilTag-orange)
-![Detection](https://img.shields.io/badge/Detection-YOLOv8-yellow)
+![Detection](https://img.shields.io/badge/Detection-YOLOv5%20%2F%20YOLOv8-yellow)
 ![Stream](https://img.shields.io/badge/Video-RTSP%20720p%4060-red)
 
-A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon setup. The Raspberry Pi provides the camera stream, and the laptop runs ArUco detection or ArUco + YOLOv8 detection.
+A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon setup. The Raspberry Pi provides the camera stream, and the laptop runs ArUco detection, YOLO-only object detection, or ArUco + YOLO detection.
 
 ## Table of Contents
 
@@ -16,7 +16,9 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - [Setup](#setup)
 - [Quick Start](#quick-start)
 - [Start ArUco Only](#start-aruco-only)
+- [Start YOLOv5 Only](#start-yolov5-only)
 - [Start ArUco Localisation](#start-aruco-localisation)
+- [Start ArUco MAVSDK Grid Demo](#start-aruco-mavsdk-grid-demo)
 - [Start ArUco--YOLOv8](#start-arucoyolov8)
 - [Optional Telemetry](#optional-telemetry)
 - [Generate Markers](#generate-markers)
@@ -26,7 +28,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 
 - Receives the Raspberry Pi camera feed on a PC
 - Runs ArUco or AprilTag detection
-- Optionally runs YOLOv8 in parallel with ArUco
+- Optionally runs YOLO object detection in parallel with ArUco
 - Displays an annotated local preview
 - Saves ArUco crops to `artifacts/aruco_crops/`
 - Includes simple Pi-to-PC UDP telemetry scripts
@@ -34,7 +36,10 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 ## Project Layout
 
 - `src/runtime/aruco_demo.py`: ArUco-only runtime
+- `src/runtime/yolo_demo.py`: YOLO-only object detection runtime
 - `src/runtime/localization_demo.py`: ArUco world-frame localisation runtime
+- `src/runtime/aruco_grid_demo_mavsdk.py`: ArUco + MAVSDK autonomous grid demo
+- `src/runtime/imu_grid_demo_mavsdk.py`: IMU + MAVSDK autonomous grid demo
 - `src/runtime/pipeline.py`: ArUco + YOLOv8 runtime
 - `src/stages/aruco_detector.py`: ArUco / AprilTag detector
 - `src/localization/aruco_localizer.py`: multi-marker world pose estimation
@@ -70,10 +75,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you want to use YOLOv8, download the ONNX model once on your PC:
+If you want to use YOLO, download the ONNX model once on your PC:
 
 ```bash
-python scripts/download_yolo_onnx.py --model yolov8s --output yolov8s.onnx
+python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
 ```
 
 ## Quick Start
@@ -92,10 +97,22 @@ ArUco + YOLOv8:
 python -m src.runtime.pipeline --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --family tag36h11 --yolo-model yolov8s.onnx --yolo-classes coco.names --yolo-input 640 --show
 ```
 
+YOLOv5 only:
+
+```bash
+python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov5s.onnx --yolo-classes coco.names --yolo-input 640 --show
+```
+
 ArUco localisation:
 
 ```bash
 python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+```
+
+ArUco + MAVSDK grid demo:
+
+```bash
+python -m src.runtime.aruco_grid_demo_mavsdk --calibration-file calibration_pi_cam.npz --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --row-spacing-m 0.20 --scan-altitude-m 1.50 --show
 ```
 
 ## Start ArUco Only
@@ -119,6 +136,37 @@ python -m src.runtime.aruco_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 -
 - Default ArUco family in `aruco_demo` is `6x6_250`
 - Press `q` or `Esc` to close the preview
 - If you are using a different marker family, change `--family` to match it
+
+## Start YOLOv5 Only
+
+Use this when you want object detection without any ArUco processing.
+
+### Before you run it
+
+Download the YOLOv5 ONNX model first:
+
+```bash
+python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
+```
+
+### Recommended command
+
+```bash
+python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov5s.onnx --yolo-classes coco.names --yolo-input 640 --show
+```
+
+### What it does
+
+- Connects to the RTSP stream from the Pi
+- Runs YOLOv5 object detection only
+- Opens a preview window with object boxes and confidence labels
+- Prints a short per-second detection summary in the terminal
+
+### Notes
+
+- Leave `--rtsp-url` empty if you want to receive the UDP stream instead
+- Press `q` or `Esc` to close the preview
+- You can still point the demo at another compatible YOLO ONNX model if needed
 
 ## Start ArUco Localisation
 
@@ -166,6 +214,83 @@ python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-
 - If only one marker is visible, pose will usually be noisier than with two or more markers
 - This demo currently assumes zero distortion coefficients, so it is best paired with a later calibration-file upgrade
 - Press `q` or `Esc` to close the preview
+
+## Start ArUco MAVSDK Grid Demo
+
+Use this when the Raspberry Pi 5 is acting as the companion computer and you want to estimate drone position from floor ArUco markers while sending movement commands to the Pixhawk 4 with MAVSDK.
+
+### What this demo does
+
+- Opens the camera on the Raspberry Pi 5
+- Detects floor ArUco markers with IDs `0`, `1`, `2`, and `3`
+- Estimates the camera pose, then the drone pose, in a world frame defined by the marker layout
+- Generates a snake-like search path across the rectangular area
+- Sends body-frame velocity commands to the Pixhawk 4 using MAVSDK Offboard mode
+- Holds, stops, and lands safely when the path is complete or when localisation fails
+
+### World frame
+
+- Marker `0` is the world origin `(0, 0, 0)`
+- `+X` points from marker `0` toward marker `1`
+- `+Y` points from marker `0` toward marker `2`
+- `+Z` points upward from the floor
+
+### Before you run it
+
+You need:
+
+- A calibrated camera saved in an `.npz` file with `camera_matrix` and `dist_coeffs`
+- Known printed marker size
+- Known center-to-center marker distances for the rectangular area
+- A Pixhawk 4 connected to the Raspberry Pi 5 through MAVLink
+- MAVSDK installed from `requirements.txt`
+
+The script assumes these floor markers:
+
+- ArUco marker `0`: top-left
+- ArUco marker `1`: top-right
+- ArUco marker `2`: bottom-left
+- ArUco marker `3`: bottom-right
+
+### Recommended command
+
+```bash
+python -m src.runtime.aruco_grid_demo_mavsdk --calibration-file calibration_pi_cam.npz --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --row-spacing-m 0.20 --scan-altitude-m 1.50 --show
+```
+
+### Common options
+
+- `--system-address serial:///dev/ttyAMA0:921600`: serial MAVLink connection to the Pixhawk 4
+- `--camera-source 0`: OpenCV camera source index or stream path
+- `--row-spacing-m 0.20`: distance between scan rows
+- `--max-speed-m-s 0.25`: conservative horizontal speed limit
+- `--min-visible-markers 1`: minimum number of visible mapped markers required to move
+
+### Calibration file format
+
+Your calibration file should be created as an `.npz` archive with:
+
+- `camera_matrix`
+- `dist_coeffs`
+
+For example, in Python:
+
+```python
+np.savez(
+    "calibration_pi_cam.npz",
+    camera_matrix=camera_matrix,
+    dist_coeffs=dist_coeffs,
+)
+```
+
+### Important notes
+
+- This is an early proof-of-concept autonomous demo, not a flight-ready system
+- ArUco localisation depends heavily on lighting, blur, marker visibility, camera angle, calibration quality, and accurate marker placement
+- If no markers are visible for too long, the script stops movement and aborts
+- PX4 Offboard mode requires continuous setpoints and may also require a valid local position source on the flight controller side
+- Start with low altitude, low speed, props guarded if possible, and a manual override ready
+- Press `Ctrl+C` to interrupt the mission; the script uses safe `try`, `except`, and `finally` shutdown handling
 
 ## Start ArUco + YOLOv8
 

@@ -2,7 +2,7 @@
 """Download a YOLO ONNX model to the local Drone project (PC side).
 
 Example:
-    python scripts/download_yolo_onnx.py --model yolov8s --output yolov8s.onnx
+    python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download YOLO ONNX model for PC inference")
     parser.add_argument(
         "--model",
-        default="yolov8s",
-        help="YOLO model base name without extension (default: yolov8s)",
+        default="yolov5s",
+        help="YOLO model base name without extension (default: yolov5s)",
     )
     parser.add_argument(
         "--output",
@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
 
 def candidate_urls(filename: str) -> list[str]:
     # Ultralytics hosts ONNX assets in releases; keep a small fallback list.
+    if filename.startswith("yolov5"):
+        return [
+            f"https://github.com/ultralytics/yolov5/releases/latest/download/{filename}",
+            f"https://github.com/ultralytics/yolov5/releases/download/v7.0/{filename}",
+        ]
+
     return [
         f"https://github.com/ultralytics/assets/releases/latest/download/{filename}",
         f"https://github.com/ultralytics/assets/releases/download/v8.3.0/{filename}",
@@ -125,7 +131,7 @@ def main() -> int:
     print("Failed to prepare YOLO ONNX model.")
     for err in errors:
         print(f"  - {err}")
-    print("Tip: try another model (e.g. --model yolov8n) or check network access.")
+    print("Tip: try another model (e.g. --model yolov5n or --model yolov8n) or check network access.")
     return 1
 
 
