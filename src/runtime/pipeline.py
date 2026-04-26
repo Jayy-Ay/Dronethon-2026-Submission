@@ -6,7 +6,7 @@ import argparse
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Generic, List, Optional, TypeVar
 
@@ -21,15 +21,39 @@ from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
 T = TypeVar("T")
 
 
+@dataclass(frozen=True)
+class FrameTask:
+    """A frame tagged with a monotonically increasing ID."""
+
+    frame_id: int
+    frame: np.ndarray
+
+
+@dataclass
+class PendingFrame:
+    """Detector outputs collected for a single frame ID."""
+
+    frame: np.ndarray
+    aruco_dets: Optional[List[ArucoDetection]] = None
+    yolo_dets: Optional[List[YoloDetection]] = None
+
+
 class DetectorWorker(Generic[T]):
     """Runs a detector continuously in its own thread on latest submitted frames."""
 
-    def __init__(self, name: str, detect_fn: Callable[[np.ndarray], List[T]], rate_hz: float) -> None:
+    def __init__(
+        self,
+        name: str,
+        detect_fn: Callable[[np.ndarray], List[T]],
+        rate_hz: float,
+        on_result: Optional[Callable[[int, np.ndarray, List[T]], None]] = None,
+    ) -> None:
         self._name = name
         self._detect_fn = detect_fn
+        self._on_result = on_result
         self._rate_hz = max(rate_hz, 0.1)
 
-        self._queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=1)
+        self._queue: "queue.Queue[FrameTask]" = queue.Queue(maxsize=1)
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True, name=f"detector-{name}")
@@ -44,15 +68,16 @@ class DetectorWorker(Generic[T]):
         self._stop.set()
         self._thread.join(timeout=2.0)
 
-    def submit(self, frame: np.ndarray) -> None:
+    def submit(self, frame_id: int, frame: np.ndarray) -> None:
+        task = FrameTask(frame_id=frame_id, frame=frame)
         try:
-            self._queue.put_nowait(frame)
+            self._queue.put_nowait(task)
         except queue.Full:
             try:
                 _ = self._queue.get_nowait()
             except queue.Empty:
                 pass
-            self._queue.put_nowait(frame)
+            self._queue.put_nowait(task)
 
     def latest(self) -> List[T]:
         with self._lock:
@@ -66,16 +91,18 @@ class DetectorWorker(Generic[T]):
         interval = 1.0 / self._rate_hz
         while not self._stop.is_set():
             try:
-                frame = self._queue.get(timeout=0.2)
+                task = self._queue.get(timeout=0.2)
             except queue.Empty:
                 continue
 
             start = time.time()
             try:
-                result = self._detect_fn(frame)
+                result = self._detect_fn(task.frame)
                 with self._lock:
                     self._latest = result
                     self._last_error = None
+                if self._on_result is not None:
+                    self._on_result(task.frame_id, task.frame, result)
             except Exception as exc:
                 with self._lock:
                     self._last_error = f"{self._name}: {exc}"
@@ -84,6 +111,149 @@ class DetectorWorker(Generic[T]):
             wait = interval - elapsed
             if wait > 0:
                 time.sleep(wait)
+
+
+@dataclass
+class FrameCache:
+    """Thread-safe cache of latest fully synchronized processed frame."""
+    frame: Optional[np.ndarray] = None
+    aruco_dets: List[ArucoDetection] = field(default_factory=list)
+    yolo_dets: List[YoloDetection] = field(default_factory=list)
+    expected_detectors: frozenset[str] = field(default_factory=frozenset)
+    latest_frame_id: int = -1
+    _version: int = 0
+    _closed: bool = False
+    _pending: dict[int, PendingFrame] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _updated: threading.Condition = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._updated = threading.Condition(self._lock)
+
+    def publish_aruco(self, frame_id: int, frame: np.ndarray, aruco_dets: List[ArucoDetection]) -> None:
+        """Store ArUco results and publish only when the frame is complete."""
+        self._publish_result(frame_id, frame, "aruco", aruco_dets)
+
+    def publish_yolo(self, frame_id: int, frame: np.ndarray, yolo_dets: List[YoloDetection]) -> None:
+        """Store YOLO results and publish only when the frame is complete."""
+        self._publish_result(frame_id, frame, "yolo", yolo_dets)
+
+    def _publish_result(self, frame_id: int, frame: np.ndarray, detector: str, detections: List[object]) -> None:
+        with self._updated:
+            if frame_id <= self.latest_frame_id:
+                return
+
+            pending = self._pending.get(frame_id)
+            if pending is None:
+                pending = PendingFrame(frame=frame)
+                self._pending[frame_id] = pending
+            else:
+                pending.frame = frame
+
+            if detector == "aruco":
+                pending.aruco_dets = list(detections) if detections else []
+            elif detector == "yolo":
+                pending.yolo_dets = list(detections) if detections else []
+            else:
+                raise ValueError(f"Unsupported detector '{detector}'")
+
+            if not self._is_complete(pending):
+                self._trim_pending_locked()
+                return
+
+            self.frame = pending.frame
+            self.aruco_dets = list(pending.aruco_dets) if pending.aruco_dets is not None else []
+            self.yolo_dets = list(pending.yolo_dets) if pending.yolo_dets is not None else []
+            self.latest_frame_id = frame_id
+            self._version += 1
+
+            stale_ids = [pending_id for pending_id in self._pending if pending_id <= frame_id]
+            for pending_id in stale_ids:
+                del self._pending[pending_id]
+
+            self._updated.notify_all()
+
+    def _is_complete(self, pending: PendingFrame) -> bool:
+        if "aruco" in self.expected_detectors and pending.aruco_dets is None:
+            return False
+        if "yolo" in self.expected_detectors and pending.yolo_dets is None:
+            return False
+        return True
+
+    def _trim_pending_locked(self, keep_latest: int = 8) -> None:
+        if len(self._pending) <= keep_latest:
+            return
+
+        stale_ids = sorted(self._pending)[:-keep_latest]
+        for pending_id in stale_ids:
+            del self._pending[pending_id]
+
+    def get_latest(self) -> tuple[Optional[np.ndarray], List[ArucoDetection], List[YoloDetection]]:
+        """Get current cached frame and detections."""
+        with self._lock:
+            return self.frame, list(self.aruco_dets), list(self.yolo_dets)
+
+    def wait_for_update(
+        self,
+        last_version: int,
+        timeout: float = 0.1,
+    ) -> tuple[int, Optional[np.ndarray], List[ArucoDetection], List[YoloDetection]]:
+        """Wait for a new processed frame to be published."""
+        deadline = time.time() + timeout
+        with self._updated:
+            while self._version <= last_version and not self._closed:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                self._updated.wait(timeout=remaining)
+
+            return self._version, self.frame, list(self.aruco_dets), list(self.yolo_dets)
+
+    def close(self) -> None:
+        with self._updated:
+            self._closed = True
+            self._updated.notify_all()
+
+
+class DisplayWorker:
+    """Runs display in its own thread, pulling latest frame and detections from cache."""
+
+    def __init__(self, cache: FrameCache) -> None:
+        self._cache = cache
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="display")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._cache.close()
+        self._thread.join(timeout=2.0)
+
+    def _run(self) -> None:
+        """Display loop: render immediately when a newly processed frame arrives."""
+        last_version = 0
+        while not self._stop.is_set():
+            version, frame, aruco_dets, yolo_dets = self._cache.wait_for_update(
+                last_version,
+                timeout=0.05,
+            )
+            if version == last_version:
+                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                    self._stop.set()
+                    break
+                continue
+
+            last_version = version
+            if frame is None:
+                continue
+
+            vis = draw_overlays(frame, aruco_dets, yolo_dets)
+            cv2.imshow("PC AI Pipeline", vis)
+            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                self._stop.set()
+                break
 
 
 @dataclass(frozen=True)
@@ -96,6 +266,11 @@ class Args:
     frame_timeout: float
     max_no_frame_seconds: float
     family: str
+    marker_length_m: float
+    camera_fx: float
+    camera_fy: float
+    camera_cx: float
+    camera_cy: float
     show: bool
     aruco_rate: float
     yolo_rate: float
@@ -121,6 +296,11 @@ def parse_args() -> Args:
         help="Exit if no frame is received for this many seconds",
     )
     parser.add_argument("--family", default="tag36h11", help="ArUco/AprilTag family")
+    parser.add_argument("--marker-length-m", type=float, default=0.1, help="Physical ArUco marker edge length in meters")
+    parser.add_argument("--camera-fx", type=float, default=0.0, help="Camera focal length fx in pixels; 0 uses an approximate model")
+    parser.add_argument("--camera-fy", type=float, default=0.0, help="Camera focal length fy in pixels; 0 uses an approximate model")
+    parser.add_argument("--camera-cx", type=float, default=0.0, help="Camera principal point cx in pixels; 0 uses image center")
+    parser.add_argument("--camera-cy", type=float, default=0.0, help="Camera principal point cy in pixels; 0 uses image center")
     parser.add_argument("--show", action="store_true", help="Show annotated local preview")
 
     parser.add_argument("--aruco-rate", type=float, default=12.0, help="ArUco detection rate (Hz)")
@@ -142,6 +322,11 @@ def parse_args() -> Args:
         frame_timeout=ns.frame_timeout,
         max_no_frame_seconds=ns.max_no_frame_seconds,
         family=ns.family,
+        marker_length_m=ns.marker_length_m,
+        camera_fx=ns.camera_fx,
+        camera_fy=ns.camera_fy,
+        camera_cx=ns.camera_cx,
+        camera_cy=ns.camera_cy,
         show=ns.show,
         aruco_rate=ns.aruco_rate,
         yolo_rate=ns.yolo_rate,
@@ -162,15 +347,29 @@ def draw_overlays(frame: np.ndarray, aruco_dets: List[ArucoDetection], yolo_dets
         x = int(det.center_x)
         y = int(det.center_y)
         cv2.circle(vis, (x, y), 5, (0, 255, 0), -1)
+        label = f"ARUCO {det.tag_id} area={det.area_px:.0f}"
+        if det.distance_m is not None:
+            label += f" dist={det.distance_m:.2f}m"
         cv2.putText(
             vis,
-            f"ARUCO {det.tag_id} area={det.area_px:.0f}",
+            label,
             (x + 8, y - 8),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             (0, 255, 0),
             1,
         )
+        if det.tvec_m is not None:
+            tx, ty, tz = det.tvec_m
+            cv2.putText(
+                vis,
+                f"x={tx:.2f} y={ty:.2f} z={tz:.2f} m",
+                (x + 8, y + 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 220, 0),
+                1,
+            )
 
     for det in yolo_dets:
         cv2.rectangle(vis, (det.x1, det.y1), (det.x2, det.y2), (255, 200, 0), 2)
@@ -198,7 +397,20 @@ def main() -> None:
         provider = StreamFrameProvider(ip=args.bind_ip, port=args.video_port)
         print(f"Listening for UDP video stream on {args.bind_ip}:{args.video_port}")
 
-    aruco_detector = ArucoDetector(family=args.family)
+    camera_matrix = None
+    if args.camera_fx > 0 and args.camera_fy > 0:
+        cx = args.camera_cx if args.camera_cx > 0 else args.rtsp_width / 2.0
+        cy = args.camera_cy if args.camera_cy > 0 else args.rtsp_height / 2.0
+        camera_matrix = np.array(
+            [[args.camera_fx, 0.0, cx], [0.0, args.camera_fy, cy], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+
+    aruco_detector = ArucoDetector(
+        family=args.family,
+        marker_length_m=args.marker_length_m,
+        camera_matrix=camera_matrix,
+    )
 
     yolo_detector = None
     yolo_model_path = Path(args.yolo_model)
@@ -217,19 +429,43 @@ def main() -> None:
             f"model={yolo_model_path} classes={yolo_classes_path}"
         )
 
-    aruco_worker = DetectorWorker("aruco", aruco_detector.detect, rate_hz=args.aruco_rate)
+    expected_detectors = {"aruco"}
+    if yolo_detector is not None:
+        expected_detectors.add("yolo")
+
+    cache = FrameCache(expected_detectors=frozenset(expected_detectors))
+
+    aruco_worker = DetectorWorker(
+        "aruco",
+        aruco_detector.detect,
+        rate_hz=args.aruco_rate,
+        on_result=cache.publish_aruco if args.show else None,
+    )
     aruco_worker.start()
 
     yolo_worker: Optional[DetectorWorker[YoloDetection]] = None
     if yolo_detector is not None:
-        yolo_worker = DetectorWorker("yolo", yolo_detector.detect, rate_hz=args.yolo_rate)
+        yolo_worker = DetectorWorker(
+            "yolo",
+            yolo_detector.detect,
+            rate_hz=args.yolo_rate,
+            on_result=cache.publish_yolo if args.show else None,
+        )
         yolo_worker.start()
 
     print("Running ArUco and YOLO in separate detector threads on PC")
+    if args.show:
+        print("Running display in separate thread")
+
+    display_worker = None
+    if args.show:
+        display_worker = DisplayWorker(cache)
+        display_worker.start()
 
     last_log = 0.0
     last_frame_time = time.time()
     last_no_frame_log = 0.0
+    frame_id = 0
     try:
         while True:
             frame = provider.get_frame_with_timeout(timeout=args.frame_timeout)
@@ -253,9 +489,10 @@ def main() -> None:
 
             last_frame_time = time.time()
 
-            aruco_worker.submit(frame)
+            aruco_worker.submit(frame_id, frame)
             if yolo_worker is not None:
-                yolo_worker.submit(frame)
+                yolo_worker.submit(frame_id, frame)
+            frame_id += 1
 
             aruco_dets = aruco_worker.latest()
             yolo_dets = yolo_worker.latest() if yolo_worker is not None else []
@@ -266,17 +503,20 @@ def main() -> None:
                 if aruco_dets:
                     ids = ",".join(str(det.tag_id) for det in aruco_dets)
                     print(f"aruco_ids={ids}")
+                    for det in aruco_dets:
+                        if det.tvec_m is None:
+                            continue
+                        tx, ty, tz = det.tvec_m
+                        print(
+                            f"aruco_pose id={det.tag_id} "
+                            f"dist={det.distance_m:.3f}m "
+                            f"x={tx:.3f} y={ty:.3f} z={tz:.3f}"
+                        )
                 if aruco_worker.last_error() is not None:
                     print(aruco_worker.last_error())
                 if yolo_worker is not None and yolo_worker.last_error() is not None:
                     print(yolo_worker.last_error())
                 last_log = now
-
-            if args.show:
-                vis = draw_overlays(frame, aruco_dets, yolo_dets)
-                cv2.imshow("PC AI Pipeline", vis)
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                    break
     except KeyboardInterrupt:
         print("\nStopping pipeline")
     finally:
@@ -284,6 +524,8 @@ def main() -> None:
         aruco_worker.stop()
         if yolo_worker is not None:
             yolo_worker.stop()
+        if display_worker is not None:
+            display_worker.stop()
         cv2.destroyAllWindows()
 
 

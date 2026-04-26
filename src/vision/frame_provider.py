@@ -73,12 +73,17 @@ class StreamFrameProvider:
         self.expected_chunks = {}
         self.frame_timestamps = {}
         self.latest_frame = None
+        self._lock = threading.Lock()
+        self._frame_ready = threading.Condition(self._lock)
+        self._frame_version = 0
+        self._last_consumed_version = 0
         self.start_receiver()
         self.HEADER_LENGTH = 16
         self.IDENTIFIER = b"MJPG_HDR"
 
     def get_frame(self):
-        return self.latest_frame
+        with self._lock:
+            return self.latest_frame
 
     def _process_packet(self, packet):
         """Extract the data from the packet and combine it with the correct frame"""
@@ -128,20 +133,18 @@ class StreamFrameProvider:
         return None
 
     def get_frame_with_timeout(self, timeout=2.0):
-        """
-        Keep trying to get a full frame until timeout is reached.
-        Returns frame or None if timeout.
-        """
-        start_time = time.time()
+        """Wait for and return the next unseen frame, or None on timeout."""
+        deadline = time.time() + timeout
+        with self._frame_ready:
+            while self._frame_version <= self._last_consumed_version:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    print("Frame timeout reached — no complete frame received.")
+                    return None
+                self._frame_ready.wait(timeout=remaining)
 
-        while time.time() - start_time < timeout:
-            frame = self.get_frame()
-
-            if frame is not None:
-                return frame
-
-        print("Frame timeout reached — no complete frame received.")
-        return None
+            self._last_consumed_version = self._frame_version
+            return self.latest_frame
 
     def _receive_loop(self):
         while True:
@@ -155,7 +158,10 @@ class StreamFrameProvider:
             frame = self._process_packet(packet)
 
             if frame is not None:
-                self.latest_frame = frame
+                with self._frame_ready:
+                    self.latest_frame = frame
+                    self._frame_version += 1
+                    self._frame_ready.notify_all()
 
     def start_receiver(self):
         """Start a new thread to constantly receive packets"""
@@ -190,21 +196,34 @@ class RtspFrameProvider:
         self.height = height
 
         self._lock = threading.Lock()
-        self._frame_ready = threading.Event()
+        self._frame_ready = threading.Condition(self._lock)
         self._stop = threading.Event()
         self._process: Optional[subprocess.Popen] = None
         self.latest_frame = None
+        self._frame_version = 0
+        self._last_consumed_version = 0
 
         self._thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._thread.start()
 
     def get_frame(self):
-        return self.latest_frame
+        with self._lock:
+            return self.latest_frame
 
     def get_frame_with_timeout(self, timeout=2.0):
-        if not self._frame_ready.wait(timeout=timeout):
-            return None
-        return self.get_frame()
+        deadline = time.time() + timeout
+        with self._frame_ready:
+            while self._frame_version <= self._last_consumed_version and not self._stop.is_set():
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+                self._frame_ready.wait(timeout=remaining)
+
+            if self._frame_version <= self._last_consumed_version:
+                return None
+
+            self._last_consumed_version = self._frame_version
+            return self.latest_frame
 
     def _receive_loop(self):
         while not self._stop.is_set():
@@ -217,9 +236,10 @@ class RtspFrameProvider:
                     if frame is None:
                         break
 
-                    with self._lock:
+                    with self._frame_ready:
                         self.latest_frame = frame
-                        self._frame_ready.set()
+                        self._frame_version += 1
+                        self._frame_ready.notify_all()
             finally:
                 self._terminate_process(process)
 
@@ -236,6 +256,8 @@ class RtspFrameProvider:
 
     def close(self):
         self._stop.set()
+        with self._frame_ready:
+            self._frame_ready.notify_all()
         process = self._process
         if process is not None:
             self._terminate_process(process)
