@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+skinparam defaultFontName Monospace
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+left to right direction
+
+title Drone Vision System Overview
+
+actor "Pilot/Operator" as Operator
+
+node "Raspberry Pi" as Pi {
+  component "Camera" as Camera
+  component "go2rtc/RTSP source" as RTSP
+  component "UDP JPEG sender" as UDP
+}
+
+node "PC Runtime" as PC {
+  component "RtspFrameProvider" as RtspProvider
+  component "StreamFrameProvider" as StreamProvider
+  component "YoloDetector" as Yolo
+  component "ArucoDetector" as Aruco
+  component "FrameCache" as Cache
+  component "DisplayWorker" as Display
+  component "ObjectGeolocator" as Geolocator
+  component "MAVSDK Telemetry" as Telemetry
+}
+
+database "YOLO Models\n(.pt / .onnx)" as Models
+collections "Class Labels\n(coco.names)" as Labels
+
+Operator --> Display : preview + logs
+
+Camera --> RTSP
+Camera --> UDP
+
+RTSP --> RtspProvider : RTSP frames
+UDP --> StreamProvider : chunked JPEG UDP
+
+RtspProvider --> Aruco : BGR frame
+RtspProvider --> Yolo : BGR frame
+StreamProvider --> Aruco : BGR frame
+StreamProvider --> Yolo : BGR frame
+
+Models --> Yolo : load model
+Labels --> Yolo : load labels
+
+Aruco --> Cache : ArUco detections
+Yolo --> Cache : YoloDetection[]\n(+ optional mask)
+
+Cache --> Display : latest frame + detections
+Yolo --> Geolocator : detections
+Telemetry --> Geolocator : pose (NED + attitude)
+Geolocator --> Display : optional object positions
+
+note bottom of Yolo
+.pt -> Ultralytics backend
+.onnx -> OpenCV DNN backend
+end note
+
+@enduml

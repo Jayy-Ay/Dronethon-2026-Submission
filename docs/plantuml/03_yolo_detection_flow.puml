@@ -1,0 +1,37 @@
+@startuml
+!theme plain
+skinparam defaultFontName Monospace
+skinparam shadowing false
+
+title YOLO Detection and Segmentation Flow (yolo_detector.py)
+
+start
+
+:Load model_path and classes_path;
+if (Model format?) then (.pt)
+  :Use Ultralytics backend;
+  :Select best available device (CUDA or CPU);
+else (.onnx/other)
+  :Use OpenCV DNN backend;
+  :Select best available device (CUDA or CPU);
+endif
+
+:Run detect(frame);
+if (Ultralytics path?) then (yes)
+  :Run model prediction;
+  :Build detections (boxes, class, confidence);
+  if (Segmentation masks returned?) then (yes)
+    :Attach mask to each detection;
+  else (no)
+    :Use box-only detections;
+  endif
+else (no)
+  :Preprocess frame and run DNN forward pass;
+  :Postprocess outputs (filter + NMS + remap to frame);
+  :Build box-only detections;
+endif
+
+:Return normalized List<YoloDetection>;
+stop
+
+@enduml

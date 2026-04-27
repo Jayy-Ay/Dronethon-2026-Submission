@@ -16,7 +16,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - [Setup](#setup)
 - [Quick Start](#quick-start)
 - [Start ArUco Only](#start-aruco-only)
-- [Start YOLOv5 Only](#start-yolov5-only)
+- [Start YOLO Only](#start-yolo-only)
 - [Start YOLO Segmentation](#start-yolo-segmentation)
 - [Start ArUco Localisation](#start-aruco-localisation)
 - [Start ArUco MAVSDK Grid Demo](#start-aruco-mavsdk-grid-demo)
@@ -79,10 +79,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you want to use YOLO object detection, download the ONNX model once on your PC:
+If you want to use YOLO object detection, download a YOLOv8 `.pt` model into the project root:
 
 ```bash
-python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
+curl -L https://github.com/ultralytics/assets/releases/latest/download/yolov8s.pt -o yolov8s.pt
 ```
 
 If you want to use YOLO segmentation, download a segmentation-capable `.pt` model into the project root:
@@ -107,10 +107,10 @@ ArUco + YOLOv8:
 python -m src.runtime.pipeline --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --family tag36h11 --yolo-model yolov8s.onnx --yolo-classes coco.names --yolo-input 640 --show
 ```
 
-YOLOv5 only:
+YOLO only:
 
 ```bash
-python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov5s.onnx --yolo-classes coco.names --yolo-input 640 --show
+python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov8s.pt --yolo-classes coco.names --yolo-input 640 --show
 ```
 
 YOLO segmentation:
@@ -122,7 +122,7 @@ python -m src.runtime.yolo_segmentation_demo --rtsp-url rtsp://dronetastic.local
 ArUco localisation:
 
 ```bash
-python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 1421.1369082868994 --camera-fy 1417.6988685113936 --camera-cx 614.0247919076297 --camera-cy 341.55448642330805 --show
 ```
 
 ArUco + MAVSDK grid demo:
@@ -134,7 +134,7 @@ python -m src.runtime.aruco_grid_demo_mavsdk --calibration-file calibration_pi_c
 MAVSDK object position demo:
 
 ```bash
-python -m src.runtime.object_position_demo_mavsdk --calibration-file calibration_pi_cam.npz --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --show
+python -m src.runtime.object_position_demo_mavsdk --camera-source rtsp://dronetastic.local:8554/cam1 --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --marker-length-m 0.267 --area-width-m 0.60 --area-height-m 0.60 --show
 ```
 
 ## Start ArUco Only
@@ -159,28 +159,28 @@ python -m src.runtime.aruco_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 -
 - Press `q` or `Esc` to close the preview
 - If you are using a different marker family, change `--family` to match it
 
-## Start YOLOv5 Only
+## Start YOLO Only
 
 Use this when you want object detection without any ArUco processing.
 
 ### Before you run it
 
-Download the YOLOv5 ONNX model first:
+Download the YOLOv8 model first:
 
 ```bash
-python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
+curl -L https://github.com/ultralytics/assets/releases/latest/download/yolov8s.pt -o yolov8s.pt
 ```
 
 ### Recommended command
 
 ```bash
-python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov5s.onnx --yolo-classes coco.names --yolo-input 640 --show
+python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov8s.pt --yolo-classes coco.names --yolo-input 640 --show
 ```
 
 ### What it does
 
 - Connects to the RTSP stream from the Pi
-- Runs YOLOv5 object detection only
+- Runs YOLOv8 object detection only
 - Opens a preview window with object boxes and confidence labels
 - Prints a short per-second detection summary in the terminal
 
@@ -188,7 +188,7 @@ python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --
 
 - Leave `--rtsp-url` empty if you want to receive the UDP stream instead
 - Press `q` or `Esc` to close the preview
-- You can still point the demo at another compatible YOLO ONNX model if needed
+- You can still point the demo at another compatible YOLO `.pt` or `.onnx` model if needed
 
 ## Start YOLO Segmentation
 
@@ -246,13 +246,13 @@ Measure these values from your real setup:
 ### Recommended RTSP command
 
 ```bash
-python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 1421.1369082868994 --camera-fy 1417.6988685113936 --camera-cx 614.0247919076297 --camera-cy 341.55448642330805 --show
 ```
 
 ### UDP command
 
 ```bash
-python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-port 5600 --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 920 --camera-fy 920 --camera-cx 640 --camera-cy 360 --show
+python -m src.runtime.localization_demo --rtsp-url "" --bind-ip 0.0.0.0 --video-port 5600 --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --camera-fx 1421.1369082868994 --camera-fy 1417.6988685113936 --camera-cx 614.0247919076297 --camera-cy 341.55448642330805 --show
 ```
 
 ### What it does
@@ -285,26 +285,28 @@ Use this when the Raspberry Pi 5 is acting as the companion computer and you wan
 
 ## Start MAVSDK Object Position Demo
 
-Use this when you want to detect an object in the camera feed and estimate its ground position from live MAVLink local position and attitude telemetry.
+Use this when you want YOLO detections projected onto the floor using ArUco markers, with live Pixhawk pose as a fallback.
 
 ### Recommended command
 
 ```bash
-python -m src.runtime.object_position_demo_mavsdk --calibration-file calibration_pi_cam.npz --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --show
+python -m src.runtime.object_position_demo_mavsdk --camera-source rtsp://dronetastic.local:8554/cam1 --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --marker-length-m 0.267 --area-width-m 0.60 --area-height-m 0.60 --show
 ```
 
 ### What it does
 
 - Opens the camera on the companion computer
+- Detects floor ArUco markers using the configured marker size
 - Runs YOLO object detection on each frame
 - Reads MAVSDK local NED position and Euler attitude from the Pixhawk
-- Back-projects the detected object through the calibrated camera model
-- Intersects that ray with the ground plane and prints the estimated object position
+- Projects each YOLO detection bottom point onto the marker-defined floor plane when markers are visible
+- Falls back to the drone's current N/E/D position when marker pose is unavailable
 
 ### Notes
 
-- The estimate assumes the object sits on the ground plane set by `--ground-down-m`
-- Camera mounting rotation and offsets matter; set the `--camera-roll-deg`, `--camera-pitch-deg`, `--camera-yaw-deg`, and camera offset flags to match your setup
+- `--marker-length-m 0.267` matches your 26.7 cm floor markers
+- Change `--area-width-m` and `--area-height-m` to your real marker center-to-center spacing
+- The default camera intrinsics use the current calibration; update `--camera-fx`, `--camera-fy`, `--camera-cx`, and `--camera-cy` again if the camera setup changes
 - Use `--target-label` more than once if you want to track several classes
 - Press `q` or `Esc` to close the preview
 

@@ -1,0 +1,46 @@
+@startuml
+!theme plain
+skinparam defaultFontName Monospace
+skinparam shadowing false
+
+title Object Geolocation Flow (object_geolocator.py)
+
+start
+
+:Input = YoloDetection + TelemetryPoseNed + camera params;
+if (mask exists and has pixels?) then (yes)
+  :Reference pixel = centroid(mask);
+else (no)
+  :Reference pixel = center of bbox;
+endif
+
+:Convert pixel -> unit camera ray;
+:Build world rotation from roll/pitch/yaw;
+:Transform ray camera -> body -> world;
+:Compute camera world position;
+
+if (ray nearly parallel to ground?) then (yes)
+  :Return None;
+  stop
+else (no)
+endif
+
+:Intersect ray with ground plane (down = ground_down_m);
+if (intersection behind camera?) then (yes)
+  :Return None;
+  stop
+else (no)
+endif
+
+:Compute object N/E/D;
+:Compute slant range;
+if (max_range_m set and exceeded?) then (yes)
+  :Return None;
+  stop
+else (no)
+  :Return ObjectPositionEstimate;
+endif
+
+stop
+
+@enduml

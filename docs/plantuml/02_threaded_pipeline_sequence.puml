@@ -1,0 +1,43 @@
+@startuml
+!theme plain
+skinparam defaultFontName Monospace
+skinparam shadowing false
+
+title Threaded ArUco + YOLO Runtime Sequence (pipeline.py)
+
+actor User
+participant "FrameProvider\n(RTSP or UDP)" as Provider
+participant "Main Loop" as Main
+participant "DetectorWorker\nAruco" as ArucoW
+participant "DetectorWorker\nYOLO" as YoloW
+participant "FrameCache" as Cache
+participant "DisplayWorker" as Display
+
+User -> Main : start runtime
+Main -> Provider : get_frame_with_timeout()
+Provider --> Main : frame + frame_id
+
+loop for each new frame
+  Main -> ArucoW : submit(frame_id, frame)
+  Main -> YoloW : submit(frame_id, frame)
+
+  par ArUco worker thread
+    ArucoW -> ArucoW : detect_fn(frame)
+    ArucoW -> Cache : publish_aruco(frame_id, frame, dets)
+  else YOLO worker thread
+    YoloW -> YoloW : detect_fn(frame)
+    YoloW -> Cache : publish_yolo(frame_id, frame, dets)
+  end
+
+  Display -> Cache : wait_for_update(last_version)
+  Cache --> Display : latest frame + aruco + yolo
+  Display -> Display : draw_overlays(...)
+  Display -> User : imshow("PC AI Pipeline")
+end
+
+note over ArucoW,YoloW
+Queue size is 1 per worker.
+Old pending frame is dropped to keep latency low.
+end note
+
+@enduml

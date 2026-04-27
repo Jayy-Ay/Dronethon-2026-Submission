@@ -3,8 +3,6 @@
 from __future__ import annotations
 import argparse
 import time
-from pathlib import Path
-from typing import Optional
 import cv2
 import numpy as np
 from src.stages.aruco_detector import ArucoDetection, ArucoDetector
