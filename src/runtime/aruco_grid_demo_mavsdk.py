@@ -1,4 +1,5 @@
-"""MAVSDK + ArUco floor-marker grid traversal demo for a Pixhawk 4 companion computer.
+
+    """MAVSDK + ArUco floor-marker grid traversal demo for a Pixhawk 4 companion computer.
 
 This script is designed for an early proof-of-concept:
 - The Raspberry Pi 5 estimates the drone pose from floor ArUco markers.

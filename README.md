@@ -17,6 +17,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - [Quick Start](#quick-start)
 - [Start ArUco Only](#start-aruco-only)
 - [Start YOLOv5 Only](#start-yolov5-only)
+- [Start YOLO Segmentation](#start-yolo-segmentation)
 - [Start ArUco Localisation](#start-aruco-localisation)
 - [Start ArUco MAVSDK Grid Demo](#start-aruco-mavsdk-grid-demo)
 - [Start ArUco--YOLOv8](#start-arucoyolov8)
@@ -37,6 +38,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 
 - `src/runtime/aruco_demo.py`: ArUco-only runtime
 - `src/runtime/yolo_demo.py`: YOLO-only object detection runtime
+- `src/runtime/yolo_segmentation_demo.py`: YOLO segmentation runtime
 - `src/runtime/localization_demo.py`: ArUco world-frame localisation runtime
 - `src/runtime/aruco_grid_demo_mavsdk.py`: ArUco + MAVSDK autonomous grid demo
 - `src/runtime/imu_grid_demo_mavsdk.py`: IMU + MAVSDK autonomous grid demo
@@ -103,6 +105,12 @@ YOLOv5 only:
 python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov5s.onnx --yolo-classes coco.names --yolo-input 640 --show
 ```
 
+YOLO segmentation:
+
+```bash
+python -m src.runtime.yolo_segmentation_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov8n-seg.pt --yolo-classes coco.names --yolo-input 640 --show
+```
+
 ArUco localisation:
 
 ```bash
@@ -167,6 +175,29 @@ python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --
 - Leave `--rtsp-url` empty if you want to receive the UDP stream instead
 - Press `q` or `Esc` to close the preview
 - You can still point the demo at another compatible YOLO ONNX model if needed
+
+## Start YOLO Segmentation
+
+Use this when you want instance segmentation masks instead of boxes only.
+
+### Recommended command
+
+```bash
+python -m src.runtime.yolo_segmentation_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --rtsp-width 1280 --rtsp-height 720 --yolo-model yolov8n-seg.pt --yolo-classes coco.names --yolo-input 640 --show
+```
+
+### What it does
+
+- Connects to the RTSP stream from the Pi
+- Runs a YOLO segmentation model through Ultralytics
+- Draws both masks and bounding boxes on the preview
+- Prints a short per-second detection summary in the terminal
+
+### Notes
+
+- Use a segmentation-capable `.pt` model such as `yolov8n-seg.pt`, `yolov8s-seg.pt`, or similar
+- ONNX detection models still work, but they will render boxes only unless they expose masks in a compatible format
+- Press `q` or `Esc` to close the preview
 
 ## Start ArUco Localisation
 

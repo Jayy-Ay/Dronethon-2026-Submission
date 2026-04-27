@@ -19,6 +19,7 @@ class YoloDetection:
     y1: int
     x2: int
     y2: int
+    mask: Optional[np.ndarray] = None
 
 
 class YoloDetector:
@@ -276,8 +277,9 @@ class YoloDetector:
         xyxy = boxes.xyxy.detach().cpu().numpy()
         confs = boxes.conf.detach().cpu().numpy()
         class_ids = boxes.cls.detach().cpu().numpy().astype(int)
+        masks = self._extract_result_masks(result, frame.shape[:2], len(class_ids))
 
-        for coords, confidence, class_id in zip(xyxy, confs, class_ids):
+        for index, (coords, confidence, class_id) in enumerate(zip(xyxy, confs, class_ids)):
             x1, y1, x2, y2 = coords
             label = names.get(class_id, f"class_{class_id}") if isinstance(names, dict) else f"class_{class_id}"
             detections.append(
@@ -289,7 +291,34 @@ class YoloDetector:
                     y1=int(y1),
                     x2=int(x2),
                     y2=int(y2),
+                    mask=masks[index] if masks is not None and index < len(masks) else None,
                 )
             )
 
         return detections
+
+    @staticmethod
+    def _extract_result_masks(
+        result: Any,
+        frame_shape: tuple[int, int],
+        expected_count: int,
+    ) -> Optional[List[np.ndarray]]:
+        """Resize Ultralytics segmentation masks into frame-space boolean arrays."""
+        masks_attr = getattr(result, "masks", None)
+        if masks_attr is None:
+            return None
+
+        data = getattr(masks_attr, "data", None)
+        if data is None:
+            return None
+
+        mask_tensor = data.detach().cpu().numpy()
+        if mask_tensor.ndim != 3 or mask_tensor.shape[0] == 0:
+            return None
+
+        frame_h, frame_w = frame_shape
+        resized_masks: List[np.ndarray] = []
+        for mask in mask_tensor[:expected_count]:
+            resized = cv2.resize(mask.astype(np.float32), (frame_w, frame_h), interpolation=cv2.INTER_LINEAR)
+            resized_masks.append(resized > 0.5)
+        return resized_masks

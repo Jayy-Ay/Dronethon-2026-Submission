@@ -51,6 +51,47 @@ class TestYoloDetectorPostprocess(unittest.TestCase):
         self.assertEqual(detections[0].label, "bicycle")
         self.assertAlmostEqual(detections[0].confidence, 0.85, places=5)
 
+    def test_extract_result_masks_resizes_and_binarizes_masks(self):
+        class _FakeTensor:
+            def __init__(self, array):
+                self._array = array
+
+            def detach(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def numpy(self):
+                return self._array
+
+        class _FakeMasks:
+            def __init__(self, array):
+                self.data = _FakeTensor(array)
+
+        class _FakeResult:
+            def __init__(self, array):
+                self.masks = _FakeMasks(array)
+
+        result = _FakeResult(
+            np.array(
+                [
+                    [[0.0, 1.0], [1.0, 0.0]],
+                    [[1.0, 1.0], [0.0, 0.0]],
+                ],
+                dtype=np.float32,
+            )
+        )
+
+        masks = YoloDetector._extract_result_masks(result, (4, 6), expected_count=2)
+
+        self.assertIsNotNone(masks)
+        self.assertEqual(len(masks), 2)
+        self.assertEqual(masks[0].shape, (4, 6))
+        self.assertEqual(masks[0].dtype, np.bool_)
+        self.assertTrue(masks[0].any())
+        self.assertTrue(masks[1].any())
+
 
 if __name__ == "__main__":
     unittest.main()

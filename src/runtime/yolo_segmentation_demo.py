@@ -1,4 +1,4 @@
-"""YOLO-only demo runtime for live preview from Pi RTSP or UDP stream."""
+"""YOLO segmentation demo runtime for live preview from Pi RTSP or UDP stream."""
 
 from __future__ import annotations
 
@@ -6,23 +6,23 @@ import argparse
 import time
 
 import cv2
-import numpy as np
 
-from src.stages.yolo_detector import YoloDetection, YoloDetector
+from src.runtime.yolo_demo import draw_yolo_overlays
+from src.stages.yolo_detector import YoloDetector
 from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI options for the standalone YOLO preview demo."""
-    parser = argparse.ArgumentParser(description="Run YOLO-only object detection demo")
+    """Parse CLI options for the standalone YOLO segmentation preview demo."""
+    parser = argparse.ArgumentParser(description="Run YOLO segmentation demo")
     parser.add_argument("--rtsp-url", default="rtsp://dronetastic.local:8554/cam1", help="Optional RTSP URL")
     parser.add_argument("--rtsp-width", type=int, default=1280, help="RTSP decode width")
     parser.add_argument("--rtsp-height", type=int, default=720, help="RTSP decode height")
     parser.add_argument("--bind-ip", default="0.0.0.0", help="UDP bind IP when --rtsp-url is empty")
     parser.add_argument("--video-port", type=int, default=5600, help="UDP bind port when --rtsp-url is empty")
-    parser.add_argument("--yolo-model", default="yolov8s.pt", help="Path to YOLO model (.pt for CUDA via Ultralytics or .onnx for OpenCV DNN)")
+    parser.add_argument("--yolo-model", default="yolov8n-seg.pt", help="Path to YOLO segmentation model")
     parser.add_argument("--yolo-classes", default="coco.names", help="Path to class labels file")
-    parser.add_argument("--yolo-input", type=int, default=416, help="YOLO square input size")
+    parser.add_argument("--yolo-input", type=int, default=640, help="YOLO square input size")
     parser.add_argument("--yolo-conf", type=float, default=0.35, help="YOLO confidence threshold")
     parser.add_argument("--yolo-nms", type=float, default=0.45, help="YOLO NMS threshold")
     parser.add_argument("--show", action="store_true", help="Show the annotated preview window")
@@ -31,51 +31,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _color_for_class(class_id: int) -> tuple[int, int, int]:
-    """Generate a stable pseudo-random color for a class id."""
-    return (
-        (37 * class_id + 80) % 255,
-        (17 * class_id + 160) % 255,
-        (29 * class_id + 220) % 255,
-    )
-
-
-def draw_yolo_overlays(frame: np.ndarray, detections: list[YoloDetection]) -> np.ndarray:
-    """Render YOLO boxes, labels, confidences, and optional segmentation masks."""
-    vis = frame.copy()
-    for det in detections:
-        color = _color_for_class(det.class_id)
-        if det.mask is not None:
-            mask = det.mask.astype(bool)
-            tinted = vis.copy()
-            tinted[mask] = (0.45 * tinted[mask] + 0.55 * np.array(color, dtype=np.float32)).astype(np.uint8)
-            vis[mask] = tinted[mask]
-
-            contours, _ = cv2.findContours(
-                det.mask.astype(np.uint8),
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
-            )
-            cv2.drawContours(vis, contours, -1, color, 2)
-
-        cv2.rectangle(vis, (det.x1, det.y1), (det.x2, det.y2), color, 2)
-        label = f"{det.label} {det.confidence:.2f}"
-        label_y = max(24, det.y1 - 10)
-        cv2.putText(
-            vis,
-            label,
-            (det.x1, label_y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            color,
-            2,
-        )
-
-    return vis
-
-
 def main() -> None:
-    """Run the YOLO object detection or segmentation demo loop."""
+    """Run the YOLO segmentation demo loop."""
     args = parse_args()
 
     provider: RtspFrameProvider | StreamFrameProvider
@@ -95,14 +52,14 @@ def main() -> None:
     )
 
     print(
-        f"YOLO demo running with model={args.yolo_model} "
+        f"YOLO segmentation demo running with model={args.yolo_model} "
         f"backend={detector.backend} device={detector.device}"
     )
-    print("Tip: use a segmentation model like yolov8n-seg.pt to render masks.")
 
     last_log = 0.0
     last_frame_time = time.time()
     last_no_frame_log = 0.0
+    warned_missing_masks = False
 
     try:
         while True:
@@ -126,22 +83,31 @@ def main() -> None:
             detections = detector.detect(frame)
             vis = draw_yolo_overlays(frame, detections)
 
+            has_masks = any(det.mask is not None for det in detections)
+            if detections and not has_masks and not warned_missing_masks:
+                print(
+                    "Detections are coming through, but no segmentation masks were returned. "
+                    "Use a segmentation-capable model such as yolov8n-seg.pt."
+                )
+                warned_missing_masks = True
+
             if args.show:
-                cv2.imshow("YOLO Only Demo", vis)
+                cv2.imshow("YOLO Segmentation Demo", vis)
 
             now = time.time()
             if now - last_log >= 1.0:
                 if detections:
+                    mask_count = sum(det.mask is not None for det in detections)
                     summary = ", ".join(f"{det.label}:{det.confidence:.2f}" for det in detections[:8])
-                    print(f"yolo={len(detections)} {summary}")
+                    print(f"segments={mask_count}/{len(detections)} {summary}")
                 else:
-                    print("yolo=0")
+                    print("segments=0")
                 last_log = now
 
             if args.show and cv2.waitKey(1) & 0xFF in (27, ord("q")):
                 break
     except KeyboardInterrupt:
-        print("\nStopping YOLO demo")
+        print("\nStopping YOLO segmentation demo")
     finally:
         provider.close()
         cv2.destroyAllWindows()
