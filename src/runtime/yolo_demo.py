@@ -80,6 +80,7 @@ def main() -> None:
 
     provider: RtspFrameProvider | StreamFrameProvider
     if args.rtsp_url:
+        # RTSP is preferred when available because it avoids UDP chunk reassembly.
         provider = RtspFrameProvider(args.rtsp_url, width=args.rtsp_width, height=args.rtsp_height)
         print(f"Receiving RTSP frames from {args.rtsp_url}")
     else:
@@ -110,6 +111,7 @@ def main() -> None:
             if frame is None:
                 now = time.time()
                 gap = now - last_frame_time
+                # Keep waiting through short stalls, but fail fast on prolonged source loss.
                 if now - last_no_frame_log >= 2.0:
                     print(
                         "Waiting for frame... "
@@ -131,6 +133,7 @@ def main() -> None:
 
             now = time.time()
             if now - last_log >= 1.0:
+                # Emit a compact once-per-second detector summary for terminal monitoring.
                 if detections:
                     summary = ", ".join(f"{det.label}:{det.confidence:.2f}" for det in detections[:8])
                     print(f"yolo={len(detections)} {summary}")

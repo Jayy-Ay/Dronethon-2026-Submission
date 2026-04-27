@@ -54,6 +54,7 @@ class YoloDetector:
 
     def _configure_inference_device(self, model: Path) -> str:
         """Prefer CUDA inference by default, falling back to CPU when unavailable."""
+        # `.pt` and `.onnx` are initialized through different runtime stacks.
         if self._backend == "ultralytics":
             return self._configure_ultralytics_backend(model)
         return self._configure_opencv_backend(model)
@@ -137,7 +138,7 @@ class YoloDetector:
         if pred.ndim != 2:
             return []
 
-        # Supports common ONNX layouts: [84, N] and [N, 84]
+        # Supports common ONNX layouts: [84, N] and [N, 84].
         if pred.shape[0] <= 100 and pred.shape[1] > pred.shape[0] and pred.shape[1] > 100:
             pred = pred.T
 
@@ -146,11 +147,13 @@ class YoloDetector:
 
         boxes_xywh = pred[:, :4]
         if pred.shape[1] >= 6 and self._uses_yolov5_scoring(pred):
+            # YOLOv5 exports include objectness at index 4.
             objectness = pred[:, 4]
             class_scores = pred[:, 5:]
             class_ids = np.argmax(class_scores, axis=1)
             confidences = objectness * class_scores[np.arange(class_scores.shape[0]), class_ids]
         else:
+            # YOLOv8 exports generally expose class confidences directly.
             class_scores = pred[:, 4:]
             class_ids = np.argmax(class_scores, axis=1)
             confidences = class_scores[np.arange(class_scores.shape[0]), class_ids]
@@ -319,6 +322,7 @@ class YoloDetector:
         frame_h, frame_w = frame_shape
         resized_masks: List[np.ndarray] = []
         for mask in mask_tensor[:expected_count]:
+            # Resize to frame-space then threshold to a boolean mask for drawing.
             resized = cv2.resize(mask.astype(np.float32), (frame_w, frame_h), interpolation=cv2.INTER_LINEAR)
             resized_masks.append(resized > 0.5)
         return resized_masks

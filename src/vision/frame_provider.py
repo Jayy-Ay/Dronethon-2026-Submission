@@ -61,7 +61,11 @@ def _read_frame(stdout, width, height):
     return np.frombuffer(raw, np.uint8).reshape((height, width, 3))
 
 class StreamFrameProvider:
-    """Video provider from raw UDP JPEG stream"""
+    """Video provider from raw UDP JPEG stream.
+
+    Expects packets in the custom `MJPG_HDR` format and reassembles each frame
+    from numbered chunks before JPEG decoding.
+    """
 
     def __init__(self, ip="127.0.0.1", port=5600):
         self.port = port
@@ -81,6 +85,7 @@ class StreamFrameProvider:
         self._frame_version = 0
         self._last_consumed_version = 0
         self.start_receiver()
+        # Packet prefix: 8-byte identifier + frame_id + total_chunks + chunk_id.
         self.HEADER_LENGTH = 16
         self.IDENTIFIER = b"MJPG_HDR"
 
@@ -114,7 +119,7 @@ class StreamFrameProvider:
         self.frames[frame_id][chunk_id] = payload
         self.expected_chunks[frame_id] = total_chunks
 
-        # If complete -> assemble
+        # Once all chunks for a frame arrive, rebuild the JPEG payload in order.
         if len(self.frames[frame_id]) == total_chunks:
 
             chunks = [
@@ -236,6 +241,7 @@ class RtspFrameProvider:
     def _receive_loop(self):
         """Continuously reconnect to ffmpeg and publish frames until stopped."""
         while not self._stop.is_set():
+            # Keep the provider resilient to transient RTSP/ffmpeg disconnects.
             process = _start_ffmpeg_stream(self.url, self.width, self.height)
             self._process = process
 

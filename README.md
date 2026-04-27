@@ -20,6 +20,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - [Start YOLO Segmentation](#start-yolo-segmentation)
 - [Start ArUco Localisation](#start-aruco-localisation)
 - [Start ArUco MAVSDK Grid Demo](#start-aruco-mavsdk-grid-demo)
+- [Start MAVSDK Object Position Demo](#start-mavsdk-object-position-demo)
 - [Start ArUco--YOLOv8](#start-arucoyolov8)
 - [Optional Telemetry](#optional-telemetry)
 - [Generate Markers](#generate-markers)
@@ -42,6 +43,7 @@ A PC-side drone vision and telemetry project for the DroneTastic RHUL hackathon 
 - `src/runtime/localization_demo.py`: ArUco world-frame localisation runtime
 - `src/runtime/aruco_grid_demo_mavsdk.py`: ArUco + MAVSDK autonomous grid demo
 - `src/runtime/imu_grid_demo_mavsdk.py`: IMU + MAVSDK autonomous grid demo
+- `src/runtime/object_position_demo_mavsdk.py`: YOLO + MAVSDK object-position demo
 - `src/runtime/pipeline.py`: ArUco + YOLOv8 runtime
 - `src/stages/aruco_detector.py`: ArUco / AprilTag detector
 - `src/localization/aruco_localizer.py`: multi-marker world pose estimation
@@ -77,10 +79,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you want to use YOLO, download the ONNX model once on your PC:
+If you want to use YOLO object detection, download the ONNX model once on your PC:
 
 ```bash
 python scripts/download_yolo_onnx.py --model yolov5s --output yolov5s.onnx
+```
+
+If you want to use YOLO segmentation, download a segmentation-capable `.pt` model into the project root:
+
+```bash
+curl -L https://github.com/ultralytics/assets/releases/latest/download/yolov8n-seg.pt -o yolov8n-seg.pt
 ```
 
 ## Quick Start
@@ -121,6 +129,12 @@ ArUco + MAVSDK grid demo:
 
 ```bash
 python -m src.runtime.aruco_grid_demo_mavsdk --calibration-file calibration_pi_cam.npz --marker-length-m 0.10 --area-width-m 0.60 --area-height-m 0.60 --row-spacing-m 0.20 --scan-altitude-m 1.50 --show
+```
+
+MAVSDK object position demo:
+
+```bash
+python -m src.runtime.object_position_demo_mavsdk --calibration-file calibration_pi_cam.npz --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --show
 ```
 
 ## Start ArUco Only
@@ -180,6 +194,15 @@ python -m src.runtime.yolo_demo --rtsp-url rtsp://dronetastic.local:8554/cam1 --
 
 Use this when you want instance segmentation masks instead of boxes only.
 
+### Before you run it
+
+Activate your project virtual environment and download the segmentation model:
+
+```bash
+source .venv/bin/activate
+curl -L https://github.com/ultralytics/assets/releases/latest/download/yolov8n-seg.pt -o yolov8n-seg.pt
+```
+
 ### Recommended command
 
 ```bash
@@ -196,6 +219,7 @@ python -m src.runtime.yolo_segmentation_demo --rtsp-url rtsp://dronetastic.local
 ### Notes
 
 - Use a segmentation-capable `.pt` model such as `yolov8n-seg.pt`, `yolov8s-seg.pt`, or similar
+- If you see `ModuleNotFoundError: No module named 'cv2'`, activate `.venv` and run `pip install -r requirements.txt`
 - ONNX detection models still work, but they will render boxes only unless they expose masks in a compatible format
 - Press `q` or `Esc` to close the preview
 
@@ -258,6 +282,31 @@ Use this when the Raspberry Pi 5 is acting as the companion computer and you wan
 - Generates a snake-like search path across the rectangular area
 - Sends body-frame velocity commands to the Pixhawk 4 using MAVSDK Offboard mode
 - Holds, stops, and lands safely when the path is complete or when localisation fails
+
+## Start MAVSDK Object Position Demo
+
+Use this when you want to detect an object in the camera feed and estimate its ground position from live MAVLink local position and attitude telemetry.
+
+### Recommended command
+
+```bash
+python -m src.runtime.object_position_demo_mavsdk --calibration-file calibration_pi_cam.npz --yolo-model yolov8s.pt --yolo-classes coco.names --target-label person --show
+```
+
+### What it does
+
+- Opens the camera on the companion computer
+- Runs YOLO object detection on each frame
+- Reads MAVSDK local NED position and Euler attitude from the Pixhawk
+- Back-projects the detected object through the calibrated camera model
+- Intersects that ray with the ground plane and prints the estimated object position
+
+### Notes
+
+- The estimate assumes the object sits on the ground plane set by `--ground-down-m`
+- Camera mounting rotation and offsets matter; set the `--camera-roll-deg`, `--camera-pitch-deg`, `--camera-yaw-deg`, and camera offset flags to match your setup
+- Use `--target-label` more than once if you want to track several classes
+- Press `q` or `Esc` to close the preview
 
 ### World frame
 

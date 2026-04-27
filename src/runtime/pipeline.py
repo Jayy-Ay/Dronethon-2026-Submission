@@ -64,6 +64,7 @@ class DetectorWorker(Generic[T]):
         try:
             self._queue.put_nowait(task)
         except queue.Full:
+            # Keep latency low by dropping backlog and always processing the freshest frame.
             try:
                 _ = self._queue.get_nowait()
             except queue.Empty:
@@ -104,6 +105,7 @@ class DetectorWorker(Generic[T]):
             elapsed = time.time() - start
             wait = interval - elapsed
             if wait > 0:
+                # Explicit pacing prevents one worker from monopolizing CPU.
                 time.sleep(wait)
 
 
@@ -171,6 +173,7 @@ class FrameCache:
             return self._version, self.frame, list(self.aruco_dets), list(self.yolo_dets)
 
     def close(self) -> None:
+        """Wake waiting threads so shutdown is immediate."""
         with self._updated:
             self._closed = True
             self._updated.notify_all()

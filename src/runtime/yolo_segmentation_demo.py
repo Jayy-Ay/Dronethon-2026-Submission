@@ -1,12 +1,9 @@
 """YOLO segmentation demo runtime for live preview from Pi RTSP or UDP stream."""
 
 from __future__ import annotations
-
 import argparse
 import time
-
 import cv2
-
 from src.runtime.yolo_demo import draw_yolo_overlays
 from src.stages.yolo_detector import YoloDetector
 from src.vision.frame_provider import RtspFrameProvider, StreamFrameProvider
@@ -37,6 +34,7 @@ def main() -> None:
 
     provider: RtspFrameProvider | StreamFrameProvider
     if args.rtsp_url:
+        # RTSP is preferred when available because it avoids UDP chunk reassembly.
         provider = RtspFrameProvider(args.rtsp_url, width=args.rtsp_width, height=args.rtsp_height)
         print(f"Receiving RTSP frames from {args.rtsp_url}")
     else:
@@ -67,6 +65,7 @@ def main() -> None:
             if frame is None:
                 now = time.time()
                 gap = now - last_frame_time
+                # Keep waiting through short stalls, but fail fast on prolonged source loss.
                 if now - last_no_frame_log >= 2.0:
                     print(
                         "Waiting for frame... "
@@ -85,6 +84,7 @@ def main() -> None:
 
             has_masks = any(det.mask is not None for det in detections)
             if detections and not has_masks and not warned_missing_masks:
+                # Helpful when a non-segmentation checkpoint is passed by mistake.
                 print(
                     "Detections are coming through, but no segmentation masks were returned. "
                     "Use a segmentation-capable model such as yolov8n-seg.pt."

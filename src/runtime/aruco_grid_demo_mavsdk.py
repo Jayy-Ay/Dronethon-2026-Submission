@@ -23,13 +23,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
 import cv2
 import numpy as np
-
 from src.localization import ArucoWorldLocalizer, MarkerMap, PoseEstimate
 from src.stages.aruco_detector import ArucoDetection, ArucoDetector
-
 try:
     from mavsdk import System
     from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
